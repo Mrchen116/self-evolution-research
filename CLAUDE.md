@@ -25,6 +25,16 @@
 - **核心方向**: 用 DSPy + GEPA 进化 skill / prompt / tool description 文本工件
 - **当前实现进度**: Phase 1（skill files）已实现；tool descriptions / system prompts / code evolution 仍在规划中
 
+### 4. Hermes Agent (`./hermes-agent/`)
+- **GitHub**: https://github.com/NousResearch/hermes-agent
+- **核心方向**: 面向终端用户的自进化 Agent（skill 生成与修订、memory nudges、跨 session 回忆、Honcho 用户建模）
+- **深度研究笔记**: [`notes/hermes-agent-features/`](./notes/hermes-agent-features/)
+  - `01-autonomous-skill-creation.md` — 自动生成 skill
+  - `02-skill-self-improvement.md` — skill 持续修订
+  - `03-memory-nudges.md` — agent-curated memory + periodic nudges
+  - `04-fts5-session-recall.md` — 跨 session 检索回忆（FTS5 + LLM summarization）
+  - `05-honcho-user-modeling.md` — Honcho dialectic user modeling
+
 ---
 
 ## 核心研究问题与已有结论
@@ -40,6 +50,22 @@
 ### 问题：agent 靠哪些信号来调优，完整轨迹还是打点？（2026-04-13）
 
 详细分析见 → [`notes/2026-04-13-self-evolution-three-projects.md`](./notes/2026-04-13-self-evolution-three-projects.md)
+
+---
+
+## 研究方法论与经验教训
+
+### 做笔记/分析时：代码逻辑 + 业务逻辑必须同时讲
+
+**教训来源**：`hermes-agent` 的 skill creation / self-improvement 笔记初稿。
+
+**问题**：只讲"`_iters_since_skill` 计数器到 10 就触发 `_spawn_background_review`"，读者（包括未来的自己）看不懂**这到底意味着什么**。
+
+**修正后的标准**：
+- 先用**业务语言**解释触发时机："当 agent 连续调用了大约 10 次普通工具却一直没调用 `skill_manage` 时，系统会在当前 turn 结束后自动派一个后台 review agent 去审视最近对话是否值得生成/更新 skill。"
+- 再用**代码逻辑**给出支撑：文件路径、变量名、阈值默认值。
+
+**规则**：代码是"怎么实现"，业务逻辑是"这在解决什么问题、在什么场景下发生"。两者缺一不可。
 
 ---
 
