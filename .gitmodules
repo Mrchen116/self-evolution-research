@@ -7,3 +7,6 @@
 [submodule "hermes-agent-self-evolution"]
 	path = hermes-agent-self-evolution
 	url = https://github.com/NousResearch/hermes-agent-self-evolution.git
+[submodule "hermes-agent"]
+	path = hermes-agent
+	url = git@github.com:NousResearch/hermes-agent.git
