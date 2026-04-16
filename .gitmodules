@@ -1,0 +1,9 @@
+[submodule "OpenSpace"]
+	path = OpenSpace
+	url = https://github.com/HKUDS/OpenSpace.git
+[submodule "dgm"]
+	path = dgm
+	url = https://github.com/jennyzzt/dgm.git
+[submodule "hermes-agent-self-evolution"]
+	path = hermes-agent-self-evolution
+	url = https://github.com/NousResearch/hermes-agent-self-evolution.git
