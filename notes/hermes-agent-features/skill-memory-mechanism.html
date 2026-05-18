@@ -301,7 +301,7 @@
   </div>
   <div class="layer curator">
     <h4>③ Curator</h4>
-    <p>跨 session 的<strong>长期管家</strong>。用 auxiliary 模型整理整个 skill 库：把长期不用的 archive、把多个相近的 consolidate 成 umbrella、把过时的 patch 掉。只动 agent-created skill。</p>
+    <p>跨 session 的<strong>长期管家</strong>。用 auxiliary 模型整理整个 skill 库：把长期不用的 archive、把多个主题相近的窄 skill 合并成一个宽口径的 <strong>umbrella</strong>（"伞"——能涵盖一整类问题的通用 skill，对立面是为某次任务现做的窄 skill）、把过时的 patch 掉。只动 agent-created skill。</p>
     <div class="when">触发：CLI 启动 / gateway 运行时按 schedule 跑</div>
   </div>
 </div>
@@ -421,7 +421,27 @@
 </svg>
 </div>
 
-<p class="note"><strong>关键点</strong>：<span class="hl-review">review fork 在 turn 结束后才启动</span>，<strong>不阻塞主对话</strong>。用户看到主 agent 的回复时，review 才刚开始。Review 跑完会以 "💾 Self-improvement review: …" 的形式在终端打印一行简洁总结。</p>
+<p class="note"><strong>关键点</strong>：<span class="hl-review">review fork 在 turn 结束后才启动</span>，<strong>不阻塞主对话</strong>。用户看到主 agent 的回复时，review 才刚开始。</p>
+
+<h3>用户实际看到什么</h3>
+
+<p>整套机制对用户的可见 UI 只有一行——review fork 完成且实际写了东西时，在终端打印：</p>
+
+<pre>  💾 Self-improvement review: Skill 'pytest-xdist-debug' created
+  💾 Self-improvement review: Memory updated · User profile updated</pre>
+
+<p>没有动作就完全静默（fork 在 daemon thread 里悄悄死掉）。即用户大多数 turn 根本察觉不到 review 存在。</p>
+
+<h3>传给 fork 的 <code>messages_snapshot</code> 里装了什么</h3>
+
+<p><code>list(messages)</code> 的一份浅拷贝——<strong>完整对话历史</strong>，包含本次 turn 里的所有：</p>
+<ul>
+  <li>user 消息（含 Honcho 注入的画像背景，如果有）</li>
+  <li>assistant 消息（含 tool_calls 字段）</li>
+  <li>tool result 消息（agent 调每个工具拿到的返回）</li>
+  <li>system reminders（如果有）</li>
+</ul>
+<p>fork 启动时把这份快照作为 <code>conversation_history</code> 参数传入新 <code>AIAgent</code>，再把 review prompt 作为新的 user message——这样 fork 看到的"对话"是【完整真实历史 + 一条 review 任务】，可以基于真实证据决策。</p>
 
 <!-- ============================ -->
 <!-- §4 Review Fork 详解          -->
@@ -429,6 +449,8 @@
 <h2>4 · Review Fork 是什么</h2>
 
 <p>主 agent 不能"暂停去想要不要存 skill"，所以 Hermes 选了一种更聪明的做法：<span class="hl-review">把自己 fork 一份，让 fork 去做 review</span>，fork 跑完自然死亡。</p>
+
+<p class="note"><strong>"fork" 不是 <code>os.fork()</code></strong>。这里指在 <code>threading.Thread(daemon=True)</code> 里实例化一个全新的 <code>AIAgent</code> Python 对象，把主 agent 的部分状态（model、provider、credentials、cached system prompt、session_id 等）作为构造参数传过去。fork 和主 agent 跑在<strong>同一个进程的不同线程</strong>，共享解释器但不共享对话上下文。</p>
 
 <h3>Fork 的 9 项关键配置（<code>agent/background_review.py:381-450</code>）</h3>
 
@@ -504,7 +526,7 @@ If nothing is worth saving, just say 'Nothing to save.' and stop.</pre>
 <thead><tr><th>结构</th><th>内容</th></tr></thead>
 <tbody>
 <tr><td>开篇基调</td><td>"Be ACTIVE — most sessions produce at least one skill update"</td></tr>
-<tr><td>目标形态</td><td>追求 class-level umbrella skill + <code>references/</code>；反对扁平窄 skill 列表</td></tr>
+<tr><td>目标形态</td><td>追求 class-level umbrella skill + <code>references/</code>；反对扁平窄 skill 列表（<strong>class-level</strong> = "类级"：命名落在一整类问题上，如 <code>pull-requests</code>、<code>postgres-migrations</code>；对立面是 instance-level 的一次性 skill，如 <code>fix-build-error-2026-04-12</code>。class-level 和 umbrella 基本是同义词，前者强调命名粒度，后者强调"把相关条目收纳在一把伞下"的结构）</td></tr>
 <tr><td>触发信号</td><td>用户纠正 style / format / workflow；non-trivial 技术；已加载 skill 被证明 wrong</td></tr>
 <tr><td>4 级偏好顺序</td><td>patch loaded → patch umbrella → write_file → create new umbrella</td></tr>
 <tr><td>Do NOT capture</td><td>环境依赖错误 / 工具负面断言 / 临时 transient error / one-off narrative</td></tr>
@@ -726,6 +748,48 @@ User-preference embedding（重要）：用户表达 style / format / workflow
 
 <p class="note">第 2 步的 provenance 是 Curator 工作的前提——Curator <strong>只动 agent-created 的 skill</strong>，永远不会改用户主动创建的 skill。</p>
 
+<h3>Skill 的三种来源，只有一种被 Curator 管</h3>
+
+<p>本机 <code>~/.hermes/skills/</code> 下的 skill 实际上来自三条路径，curator 只动其中第三种：</p>
+
+<table>
+<thead>
+<tr><th>来源</th><th>判定方式</th><th>Curator 会动吗？</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>① Bundled</strong>（hermes 自带 / 内置）</td>
+  <td>名字出现在 <code>.bundled_manifest</code> 里</td>
+  <td><span class="hl-warn">不会</span></td>
+</tr>
+<tr>
+  <td><strong>② Hub-installed</strong>（从 skills-hub 装的）</td>
+  <td>名字出现在 hub 安装记录里</td>
+  <td><span class="hl-warn">不会</span></td>
+</tr>
+<tr>
+  <td><strong>③ Agent-created</strong>（review fork 自己写出来的）</td>
+  <td><code>.usage.json</code> 里这个 skill 的 record 含 <code>curator_managed: true</code></td>
+  <td><span class="hl-curator">会</span></td>
+</tr>
+</tbody>
+</table>
+
+<p>注意：<strong>用户在前台主动调 <code>skill_manage(action="create")</code> 创建的 skill 不归任何一类</strong>——它既不在 bundled / hub 名单里，<code>.usage.json</code> 里也没被 <code>mark_agent_created()</code> 打标。结果是 curator 一律视为"用户主动作品"，永远不动。</p>
+
+<h3>怎么打"agent-created"这个标？</h3>
+
+<p>用 Python 的 <code>contextvars.ContextVar</code>（<code>tools/skill_provenance.py</code>）：</p>
+
+<ol>
+  <li>review fork 启动时，进入 <code>background_review_context()</code>，把 ContextVar 设为 True</li>
+  <li>fork 在这个上下文里调 <code>skill_manage(action="create", ...)</code></li>
+  <li>dispatcher 成功写入后，调 <code>is_background_review()</code> 查 ContextVar；为 True 就 <code>mark_agent_created(name)</code> 写进 <code>.usage.json</code></li>
+  <li>fork 退出，ContextVar 恢复</li>
+</ol>
+
+<p>主 agent 的前台调用拿不到这个 ContextVar = True 的上下文，所以前台 create 不会打标——<strong>边界就在这里</strong>。</p>
+
 <!-- ============================ -->
 <!-- §7 目录结构                  -->
 <!-- ============================ -->
@@ -750,7 +814,7 @@ User-preference embedding（重要）：用户表达 style / format / workflow
 │   │   └── <span class="dir">scripts/</span>                     <span class="com"># 可静态重跑的脚本</span><br>
 │   │       └── verify.py<br>
 │   │<br>
-│   └── <span class="dir">&lt;category&gt;/</span>                     <span class="com"># 可选分类层</span><br>
+│   └── <span class="dir">&lt;category&gt;/</span>                     <span class="com"># 可选分类层，仅影响目录组织</span><br>
 │       └── <span class="dir">&lt;skill-name&gt;/</span><br>
 │           └── SKILL.md<br>
 │<br>
@@ -766,6 +830,10 @@ User-preference embedding（重要）：用户表达 style / format / workflow
         └── REPORT.md                      <span class="com"># 人类可读的整理报告</span><br>
 </div>
 
+<h3>关于 <code>category</code></h3>
+
+<p>调 <code>skill_manage(action="create", name="foo", category="hermes")</code> 时，文件落点会变成 <code>~/.hermes/skills/hermes/foo/SKILL.md</code>，多一层目录。<strong>这只影响磁盘组织</strong>——agent 检索 skill 时按 frontmatter 的 <code>description</code> 字段语义匹配，category 不参与检索逻辑。所以分类是给人类目录浏览用的，对 agent 行为没影响。</p>
+
 <h3>MEMORY.md / USER.md 的格式</h3>
 
 <p>纯文本 Markdown，条目之间用 <code>\n§\n</code> 分隔：</p>
@@ -780,7 +848,7 @@ Project uses pytest with xdist; tests live in tests/ at repo root.
 
 User is on macOS arm64; ripgrep is preinstalled as `rg`.</pre>
 
-<p>在 system prompt 里渲染时带实时使用率：</p>
+<p>每个 turn 构造 system prompt 时，<strong>两个文件的全文都会被注入</strong>（它们有硬上限，所以放得下），并在头部加一行"已用 / 上限"的占用提示——目的是让 agent 自己感知"笔记本快满了"，到点主动调 <code>memory</code> 工具去精简、合并，而不是无脑追加：</p>
 
 <pre>══════════════════════════════════════════════
 MEMORY (your personal notes) [45% — 990/2200 chars]
@@ -887,6 +955,17 @@ skill_manage(action='patch') 修——别等用户提醒。不被维护的 skill
 <h2>9 · Curator：跨 session 的长期管家</h2>
 
 <p>这是本文档最长的一节——因为 Curator 是<strong>独立的第二条 skill 进化路径</strong>，和前面 1-8 节讲的 per-turn review 完全不同。Per-turn review 解决的是"<strong>当下这段对话</strong>有没有该记的"，curator 解决的是"<strong>整个 skill 库</strong>是不是越来越乱"。</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4>"session" 在 Hermes 里指什么</h4>
+    <p style="font-size:13px;margin:0">一次 <code>hermes</code> CLI 从启动到退出 = 1 个 session；或 gateway 模式下一次 web 连接 = 1 个 session。<strong>memory（MEMORY.md / USER.md）跨 session 持久</strong>；conversation history 按 session 隔离存到 SQLite，可通过 <code>session_search</code> 跨 session 检索。</p>
+  </div>
+  <div class="card">
+    <h4>"auxiliary model" 是什么</h4>
+    <p style="font-size:13px;margin:0">Hermes 在配置里允许声明 <code>auxiliary.&lt;task&gt;.{provider,model,api_key,base_url}</code>，用于把一些"体力活"路由到比主对话模型便宜的模型上。Curator 用 <code>auxiliary.curator.*</code>，session_search 用 <code>auxiliary.session_search.*</code>。可以是同一家厂商的 Haiku/Mini，也可以是另一家（Gemini Flash 等）；不配的话 fall back 到主对话模型。</p>
+  </div>
+</div>
 
 <h3>9.1 为什么需要 Curator？</h3>
 
@@ -1012,7 +1091,15 @@ skill_manage(action='patch') 修——别等用户提醒。不被维护的 skill
 </svg>
 </div>
 
-<p>状态转换的 anchor 是 <code>last_activity_at</code>（最后一次被 view / 用 / patch 的时间）。逻辑（<code>curator.py:282-294</code>）：</p>
+<p>状态转换的 anchor 是 <code>last_activity_at</code>，定义为 <code>last_used_at</code> / <code>last_viewed_at</code> / <code>last_patched_at</code> <strong>三者取最新</strong>（<code>tools/skill_usage.py:120</code>）。所以下列任一动作都会刷新 anchor、把 stale 拉回 active：</p>
+
+<ul>
+  <li>主 agent 或 fork 调 <code>skill_view(name="X")</code> 读这个 skill → <code>bump_view</code></li>
+  <li>用户在 CLI 里输 <code>/X</code>（加载 skill 进对话）→ <code>bump_use</code></li>
+  <li>agent 或 review fork 调 <code>skill_manage(action="patch"/"edit"/"write_file"/"remove_file", name="X")</code> → <code>bump_patch</code></li>
+</ul>
+
+<p>"create 时间"不算 activity——刚生出来的 skill 如果没人碰，到了 90 天阈值照样会被 archive。状态转换逻辑（<code>curator.py:282-294</code>）：</p>
 
 <ul>
   <li><code>anchor ≤ 90d 前</code> 且当前不是 archived → <strong>archive</strong>（移到 <code>.archive/</code>）</li>
@@ -1468,10 +1555,13 @@ DRY-RUN —— 仅报告。不要 mutate（修改）skill 库。
 <table>
 <thead><tr><th>命令</th><th>作用</th></tr></thead>
 <tbody>
-<tr><td><code>hermes curator status</code></td><td>查看上次跑的时间、summary、报告路径</td></tr>
+<tr><td><code>hermes curator status</code></td><td>查看上次跑的时间、summary、报告路径、以及当前所有 pinned skill 列表</td></tr>
 <tr><td><code>hermes curator run</code></td><td>立刻强跑一次（绕过 idle gate）</td></tr>
 <tr><td><code>hermes curator run --dry</code></td><td>跑一次预览，只产报告不动 skill</td></tr>
 <tr><td><code>hermes curator pause</code> / <code>resume</code></td><td>暂停 / 恢复自动调度（写入 <code>.curator_state.paused</code>）</td></tr>
+<tr><td><code>hermes curator pin &lt;name&gt;</code></td><td>把某 skill 标为 pinned；调 <code>skill_usage.set_pinned(name, True)</code> 写到 <code>.usage.json</code>。pinned skill 在 §9.4 自动转换和 §9.7 LLM 整合中都被跳过</td></tr>
+<tr><td><code>hermes curator unpin &lt;name&gt;</code></td><td>取消 pinned</td></tr>
+<tr><td><code>hermes curator archive &lt;name&gt;</code></td><td>手动 archive 一个 agent-created skill（pinned 的会拒绝；要先 unpin）</td></tr>
 </tbody>
 </table>
 
