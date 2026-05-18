@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Hermes Agent · Skill / Memory 自动生成更新机制</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --ink: #1a1a1a;
+    --muted: #6b6b6b;
+    --line: #d8d4cc;
+    --code-bg: #f0ede5;
+    --main: #2c5f9e;
+    --review: #d97e2c;
+    --curator: #7a3f9e;
+    --storage: #5a6b5a;
+    --trigger: #3a8a4f;
+    --warn: #a83838;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.65;
+    margin: 0;
+    padding: 0;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 32px 80px; }
+  h1 {
+    font-size: 32px;
+    border-bottom: 3px solid var(--ink);
+    padding-bottom: 12px;
+    margin: 0 0 8px;
+  }
+  h2 {
+    font-size: 22px;
+    margin: 52px 0 16px;
+    padding: 8px 14px;
+    background: var(--ink);
+    color: var(--bg);
+    display: inline-block;
+    border-radius: 3px;
+  }
+  h3 { font-size: 17px; margin: 28px 0 10px; color: var(--ink); }
+  h4 { font-size: 15px; margin: 18px 0 8px; }
+  .lead {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 32px;
+  }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 3px; }
+  pre {
+    background: var(--code-bg);
+    padding: 14px 16px;
+    border-radius: 4px;
+    border-left: 3px solid var(--line);
+    overflow-x: auto;
+    line-height: 1.55;
+  }
+  pre.prompt {
+    border-left-color: var(--review);
+    background: #fcf7ee;
+    white-space: pre-wrap;
+  }
+  pre.prompt-curator {
+    border-left-color: var(--curator);
+    background: #f7eef9;
+    white-space: pre-wrap;
+  }
+
+  /* Language toggle */
+  .lang-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 100;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px;
+    display: flex;
+    gap: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  .lang-toggle button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 6px 14px;
+    cursor: pointer;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  .lang-toggle button.active {
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  /* Prompt block with EN/ZH variants */
+  .prompt-block { margin: 12px 0; }
+  .prompt-block > pre { display: none; }
+  body[data-lang="en"] .prompt-block > pre[data-lang="en"] { display: block; }
+  body[data-lang="zh"] .prompt-block > pre[data-lang="zh"] { display: block; }
+
+  /* Three-layer hero */
+  .layers {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+    margin: 24px 0 16px;
+  }
+  .layer {
+    background: white;
+    border-radius: 6px;
+    padding: 18px;
+    border-top: 4px solid;
+  }
+  .layer.main { border-color: var(--main); }
+  .layer.review { border-color: var(--review); }
+  .layer.curator { border-color: var(--curator); }
+  .layer h4 {
+    margin: 0 0 8px;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .layer.main h4 { color: var(--main); }
+  .layer.review h4 { color: var(--review); }
+  .layer.curator h4 { color: var(--curator); }
+  .layer p { margin: 0; font-size: 13px; color: var(--muted); }
+  .layer .when {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  /* Tables */
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    background: white;
+    margin: 14px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    background: var(--code-bg);
+    font-weight: 600;
+    font-size: 13px;
+  }
+  td code { background: transparent; padding: 0; }
+
+  .seq {
+    background: white;
+    padding: 24px;
+    border-radius: 6px;
+    margin: 16px 0;
+    border: 1px solid var(--line);
+  }
+
+  /* Pills / tags */
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: white;
+    vertical-align: middle;
+  }
+  .pill.main { background: var(--main); }
+  .pill.review { background: var(--review); }
+  .pill.curator { background: var(--curator); }
+  .pill.storage { background: var(--storage); }
+  .pill.trigger { background: var(--trigger); }
+  .pill.warn { background: var(--warn); }
+
+  /* Tree */
+  .tree {
+    background: white;
+    padding: 18px 24px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.85;
+  }
+  .tree .com { color: var(--muted); font-style: italic; }
+  .tree .dir { color: var(--storage); font-weight: 600; }
+
+  /* Two-col callout */
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 14px 0;
+  }
+  .card {
+    background: white;
+    padding: 16px 18px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+  }
+  .card h4 { margin: 0 0 8px; font-size: 14px; }
+  .card.curator-card { border-left: 4px solid var(--curator); }
+
+  /* Collapsible */
+  details {
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin: 12px 0;
+  }
+  details > summary {
+    padding: 12px 18px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    list-style: none;
+    user-select: none;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "▶ "; color: var(--review); font-size: 11px; }
+  details[open] > summary::before { content: "▼ "; }
+  details.curator > summary::before { color: var(--curator); }
+  details > div { padding: 0 18px 16px; }
+
+  .hl-trigger { color: var(--trigger); font-weight: 600; }
+  .hl-main    { color: var(--main); font-weight: 600; }
+  .hl-review  { color: var(--review); font-weight: 600; }
+  .hl-curator { color: var(--curator); font-weight: 600; }
+  .hl-warn    { color: var(--warn); font-weight: 600; }
+
+  hr {
+    border: none;
+    border-top: 1px dashed var(--line);
+    margin: 36px 0;
+  }
+
+  svg { display: block; max-width: 100%; height: auto; }
+
+  .note {
+    font-size: 12px;
+    color: var(--muted);
+    border-left: 3px solid var(--line);
+    padding-left: 12px;
+    margin: 12px 0;
+  }
+  .note.curator-note { border-left-color: var(--curator); }
+
+  /* Curator state machine */
+  .state-machine {
+    background: white;
+    padding: 30px 20px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin: 16px 0;
+  }
+</style>
+</head>
+<body data-lang="zh">
+
+<div class="lang-toggle">
+  <button data-target="zh" class="active">中文</button>
+  <button data-target="en">EN</button>
+</div>
+
+<div class="wrap">
+
+<h1>Hermes Agent · Skill / Memory 自动生成更新机制</h1>
+<div class="lead">研究空间：<code>self-evolution/hermes-agent</code> · 最后校对 2026-05-18 · 右上角可切换 prompt 的中英文显示</div>
+
+<!-- ============================ -->
+<!-- §1 三层结构总览              -->
+<!-- ============================ -->
+<h2>1 · 三层结构总览</h2>
+
+<p>Hermes 让 skill 和 memory 自动生成 / 更新的整套机制由<strong>三层并行</strong>构成。理解这三层是其它细节的前提：</p>
+
+<div class="layers">
+  <div class="layer main">
+    <h4>① 主 Agent</h4>
+    <p>在每个 turn 里和用户对话，可以<strong>主动</strong>调用 <code>memory</code> / <code>skill_manage</code> 工具。System prompt 里有 <code>MEMORY_GUIDANCE</code> / <code>SKILLS_GUIDANCE</code> 常驻提醒它"该记就记、该改就改"。</p>
+    <div class="when">触发：每个 turn 都跑</div>
+  </div>
+  <div class="layer review">
+    <h4>② Per-turn Review Fork</h4>
+    <p>当主 agent 一段时间没主动管 memory / skill 时，turn 结束后<strong>在后台 daemon thread 里 fork 一个新 agent</strong>，让它专门审视："这段对话里有没有该沉淀的东西？"</p>
+    <div class="when">触发：每 ~10 turn / 10 tool iteration</div>
+  </div>
+  <div class="layer curator">
+    <h4>③ Curator</h4>
+    <p>跨 session 的<strong>长期管家</strong>。用 auxiliary 模型整理整个 skill 库：把长期不用的 archive、把多个相近的 consolidate 成 umbrella、把过时的 patch 掉。只动 agent-created skill。</p>
+    <div class="when">触发：CLI 启动 / gateway 运行时按 schedule 跑</div>
+  </div>
+</div>
+
+<p class="note">三层<strong>互不阻塞主对话</strong>：①是主线；②跑在 daemon thread，turn 结束才启动；③用独立 auxiliary client，从不碰主 session 的 prompt cache。</p>
+
+<!-- ============================ -->
+<!-- §2 触发机制                  -->
+<!-- ============================ -->
+<h2>2 · 触发机制：两个计数器</h2>
+
+<p>Hermes 用两个非常朴素的计数器来决定 per-turn review 是否启动。先明确两个概念：</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4>User Turn（用户轮次）</h4>
+    <p style="margin:0;font-size:13px">用户发一条消息 → agent 给出最终回复，算 <strong>1 个 turn</strong>。即使期间调了 5 个工具，仍然只是 1 个 turn。</p>
+  </div>
+  <div class="card">
+    <h4>Tool Iteration（工具迭代）</h4>
+    <p style="margin:0;font-size:13px">主 agent 内部一次"思考 → 调用工具 → 拿到结果"的循环。<strong>1 个 turn 通常包含多个 iteration</strong>。</p>
+  </div>
+</div>
+
+<table>
+<thead>
+<tr>
+  <th>类别</th><th>计数器</th><th>+1 时机</th><th>归零时机</th><th>默认阈值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><span class="pill" style="background:#5a6f8a">Memory</span></td>
+  <td><code>_turns_since_memory</code></td>
+  <td>每个 user turn 结束</td>
+  <td>agent 调用了 <code>memory</code> 工具</td>
+  <td><strong>10 turns</strong></td>
+</tr>
+<tr>
+  <td><span class="pill review">Skill</span></td>
+  <td><code>_iters_since_skill</code></td>
+  <td>每个 tool iteration 进入</td>
+  <td>agent 调用了 <code>skill_manage</code> 工具</td>
+  <td><strong>10 iterations</strong></td>
+</tr>
+</tbody>
+</table>
+
+<p>用人话说：<span class="hl-trigger">"agent 已经做了很多事但一直没主动整理"</span> 时，系统在当前 turn 结束后自动派 review fork 去审视。如果 agent 自己经常主动调 <code>memory</code> / <code>skill_manage</code>，计数器就会反复归零，review 几乎不会触发。</p>
+
+<!-- ============================ -->
+<!-- §3 一个 turn 的完整时序     -->
+<!-- ============================ -->
+<h2>3 · 一个 turn 的完整时序</h2>
+
+<div class="seq">
+<svg viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg">
+  <line x1="120" y1="40" x2="120" y2="460" stroke="#bbb" stroke-dasharray="3,3"/>
+  <line x1="370" y1="40" x2="370" y2="460" stroke="#bbb" stroke-dasharray="3,3"/>
+  <line x1="620" y1="40" x2="620" y2="460" stroke="#bbb" stroke-dasharray="3,3"/>
+  <line x1="820" y1="40" x2="820" y2="460" stroke="#bbb" stroke-dasharray="3,3"/>
+
+  <rect x="60"  y="10" width="120" height="26" fill="#1a1a1a" rx="3"/>
+  <text x="120" y="28" text-anchor="middle" fill="#fafaf7" font-size="13" font-weight="600">User</text>
+  <rect x="310" y="10" width="120" height="26" fill="#2c5f9e" rx="3"/>
+  <text x="370" y="28" text-anchor="middle" fill="white" font-size="13" font-weight="600">Main Agent</text>
+  <rect x="560" y="10" width="120" height="26" fill="#d97e2c" rx="3"/>
+  <text x="620" y="28" text-anchor="middle" fill="white" font-size="13" font-weight="600">Review Fork</text>
+  <rect x="760" y="10" width="120" height="26" fill="#5a6b5a" rx="3"/>
+  <text x="820" y="28" text-anchor="middle" fill="white" font-size="13" font-weight="600">~/.hermes/</text>
+
+  <line x1="120" y1="65" x2="370" y2="65" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="245" y="60" text-anchor="middle" font-size="12">① 发送消息</text>
+
+  <rect x="335" y="80" width="70" height="120" fill="#2c5f9e" opacity="0.15" rx="3"/>
+  <text x="370" y="100" text-anchor="middle" font-size="11" fill="#2c5f9e" font-weight="600">tool loop</text>
+  <text x="370" y="118" text-anchor="middle" font-size="11">iteration 1</text>
+  <text x="370" y="135" text-anchor="middle" font-size="11">iteration 2</text>
+  <text x="370" y="152" text-anchor="middle" font-size="11">…</text>
+  <text x="370" y="173" text-anchor="middle" font-size="11">_iters_since_skill</text>
+  <text x="370" y="188" text-anchor="middle" font-size="11" fill="#3a8a4f">+= 1 each iter</text>
+
+  <line x1="370" y1="215" x2="120" y2="215" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="245" y="210" text-anchor="middle" font-size="12">② 给用户最终回复</text>
+
+  <rect x="320" y="230" width="100" height="42" fill="#3a8a4f" opacity="0.15" rx="3" stroke="#3a8a4f" stroke-dasharray="2,2"/>
+  <text x="370" y="248" text-anchor="middle" font-size="11" fill="#3a8a4f" font-weight="600">turn-end check</text>
+  <text x="370" y="263" text-anchor="middle" font-size="10" fill="#3a8a4f">_iters_since_skill ≥ 10 ?</text>
+
+  <line x1="370" y1="285" x2="620" y2="285" stroke="#d97e2c" stroke-width="1.5" marker-end="url(#arrow-orange)"/>
+  <text x="495" y="280" text-anchor="middle" font-size="12">③ spawn daemon thread</text>
+  <text x="495" y="295" text-anchor="middle" font-size="10" fill="#6b6b6b">+ messages_snapshot + review prompt</text>
+
+  <rect x="585" y="305" width="70" height="80" fill="#d97e2c" opacity="0.18" rx="3"/>
+  <text x="620" y="324" text-anchor="middle" font-size="11" fill="#d97e2c" font-weight="600">review loop</text>
+  <text x="620" y="342" text-anchor="middle" font-size="10">max_iter = 16</text>
+  <text x="620" y="358" text-anchor="middle" font-size="10">只能调</text>
+  <text x="620" y="372" text-anchor="middle" font-size="10">memory + skill</text>
+
+  <line x1="620" y1="400" x2="820" y2="400" stroke="#5a6b5a" stroke-width="1.5" marker-end="url(#arrow-grey)"/>
+  <text x="720" y="395" text-anchor="middle" font-size="12">④ skill_manage / memory</text>
+
+  <line x1="620" y1="430" x2="120" y2="430" stroke="#d97e2c" stroke-width="1" marker-end="url(#arrow-orange)" stroke-dasharray="4,3"/>
+  <text x="380" y="425" text-anchor="middle" font-size="11" fill="#d97e2c">⑤ 💾 Self-improvement review: Skill 'x' created</text>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a1a1a"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d97e2c"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6b5a"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+
+<p class="note"><strong>关键点</strong>：<span class="hl-review">review fork 在 turn 结束后才启动</span>，<strong>不阻塞主对话</strong>。用户看到主 agent 的回复时，review 才刚开始。Review 跑完会以 "💾 Self-improvement review: …" 的形式在终端打印一行简洁总结。</p>
+
+<!-- ============================ -->
+<!-- §4 Review Fork 详解          -->
+<!-- ============================ -->
+<h2>4 · Review Fork 是什么</h2>
+
+<p>主 agent 不能"暂停去想要不要存 skill"，所以 Hermes 选了一种更聪明的做法：<span class="hl-review">把自己 fork 一份，让 fork 去做 review</span>，fork 跑完自然死亡。</p>
+
+<h3>Fork 的 9 项关键配置（<code>agent/background_review.py:381-450</code>）</h3>
+
+<table>
+<thead>
+<tr><th width="30%">配置</th><th>作用</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model / provider</code></td><td>与主 agent 完全一致（除非主 agent 用 <code>codex_app_server</code>，则 downgrade 到 <code>codex_responses</code>）</td></tr>
+<tr><td><code>max_iterations=16</code></td><td>review 限定最多 16 轮思考</td></tr>
+<tr><td><code>quiet_mode=True</code></td><td>不在终端打日常输出</td></tr>
+<tr><td><code>memory / skill nudge interval = 0</code></td><td><strong>防止 review fork 自己又触发 review</strong>（无限递归）</td></tr>
+<tr><td><code>skip_memory=True</code></td><td>fork 不连接外部 memory plugin（Honcho / Mem0 等），避免 review 流程的内部 prompt 被误写进用户真实 memory namespace</td></tr>
+<tr><td><strong>工具白名单</strong></td><td><code>set_thread_tool_whitelist({memory, skills})</code> —— fork 只能调这两组工具</td></tr>
+<tr><td><strong>继承 system prompt 缓存</strong></td><td><code>_cached_system_prompt</code> + <code>session_id</code> + <code>session_start</code> 全部继承，让 fork 的 HTTP 请求命中和主 agent <strong>同一份 prefix cache</strong>（实测 Sonnet 4.5 上 ~26% 成本下降）</td></tr>
+<tr><td><code>_bg_review_auto_deny</code></td><td>危险命令自动 deny，避免和主线程 TUI prompt 死锁</td></tr>
+<tr><td><code>suppress_status_output</code></td><td>fork 的 lifecycle 警告不冒泡给用户</td></tr>
+</tbody>
+</table>
+
+<!-- ============================ -->
+<!-- §5 三段 review prompt       -->
+<!-- ============================ -->
+<h2>5 · Per-turn Review 的三段 Prompt</h2>
+
+<p>fork 启动时会根据触发情况，注入三个 prompt 之一作为 user_message。这三段 prompt 是<strong>整个 self-improvement 机制的"灵魂"</strong>——没有任何代码逻辑去做 diff、对比、规则匹配，所有"该不该记 / 该不该改 / 怎么改"的决策全靠这三段自然语言。</p>
+
+<table>
+<thead>
+<tr><th>Prompt</th><th>触发条件</th><th>位置</th></tr>
+</thead>
+<tbody>
+<tr><td><code>_MEMORY_REVIEW_PROMPT</code></td><td>只 memory 计数器到期</td><td><code>background_review.py:34-43</code></td></tr>
+<tr><td><code>_SKILL_REVIEW_PROMPT</code></td><td>只 skill 计数器到期</td><td><code>background_review.py:45-139</code></td></tr>
+<tr><td><code>_COMBINED_REVIEW_PROMPT</code></td><td>两个同时到期</td><td><code>background_review.py:141-215</code></td></tr>
+</tbody>
+</table>
+
+<details open>
+<summary>① Memory Review Prompt（最短）</summary>
+<div>
+<div class="prompt-block">
+<pre class="prompt" data-lang="en">Review the conversation above and consider saving to memory if appropriate.
+
+Focus on:
+1. Has the user revealed things about themselves — their persona, desires,
+   preferences, or personal details worth remembering?
+2. Has the user expressed expectations about how you should behave, their work
+   style, or ways they want you to operate?
+
+If something stands out, save it using the memory tool.
+If nothing is worth saving, just say 'Nothing to save.' and stop.</pre>
+<pre class="prompt" data-lang="zh">回顾上面的对话，如果合适的话，考虑保存到 memory 中。
+
+重点关注：
+1. 用户是否透露了关于他们自己的信息——他们的个性、愿望、偏好，
+   或值得记住的个人细节？
+2. 用户是否表达了对你应该如何表现、他们的工作风格、或他们希望你
+   如何运作的期望？
+
+如果有值得保留的内容，用 memory 工具保存下来。
+如果没什么值得保存的，只说 'Nothing to save.' 然后停止。</pre>
+</div>
+</div>
+</details>
+
+<details>
+<summary>② Skill Review Prompt（约 95 行，全文）</summary>
+<div>
+<p>这段 prompt 是整个 skill 体系的"宪法"。结构概览：</p>
+
+<table>
+<thead><tr><th>结构</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td>开篇基调</td><td>"Be ACTIVE — most sessions produce at least one skill update"</td></tr>
+<tr><td>目标形态</td><td>追求 class-level umbrella skill + <code>references/</code>；反对扁平窄 skill 列表</td></tr>
+<tr><td>触发信号</td><td>用户纠正 style / format / workflow；non-trivial 技术；已加载 skill 被证明 wrong</td></tr>
+<tr><td>4 级偏好顺序</td><td>patch loaded → patch umbrella → write_file → create new umbrella</td></tr>
+<tr><td>Do NOT capture</td><td>环境依赖错误 / 工具负面断言 / 临时 transient error / one-off narrative</td></tr>
+<tr><td>结尾</td><td>"'Nothing to save.' is real but NOT the default"</td></tr>
+</tbody>
+</table>
+
+<div class="prompt-block">
+<pre class="prompt" data-lang="en">Review the conversation above and update the skill library. Be ACTIVE —
+most sessions produce at least one skill update, even if small. A pass that
+does nothing is a missed learning opportunity, not a neutral outcome.
+
+Target shape of the library: CLASS-LEVEL skills, each with a rich SKILL.md
+and a `references/` directory for session-specific detail. Not a long flat
+list of narrow one-session-one-skill entries. This shapes HOW you update,
+not WHETHER you update.
+
+Signals to look for (any one of these warrants action):
+  • User corrected your style, tone, format, legibility, or verbosity.
+    Frustration signals like 'stop doing X', 'this is too verbose', 'don't
+    format like this', 'why are you explaining', 'just give me the answer',
+    'you always do Y and I hate it', or an explicit 'remember this' are
+    FIRST-CLASS skill signals, not just memory signals. Update the relevant
+    skill(s) to embed the preference so the next session starts already
+    knowing.
+  • User corrected your workflow, approach, or sequence of steps. Encode
+    the correction as a pitfall or explicit step in the skill that governs
+    that class of task.
+  • Non-trivial technique, fix, workaround, debugging path, or tool-usage
+    pattern emerged that a future session would benefit from. Capture it.
+  • A skill that got loaded or consulted this session turned out to be
+    wrong, missing a step, or outdated. Patch it NOW.
+
+Preference order — prefer the earliest action that fits, but do pick one
+when a signal above fired:
+  1. UPDATE A CURRENTLY-LOADED SKILL. Look back through the conversation
+     for skills the user loaded via /skill-name or you read via skill_view.
+     If any of them covers the territory of the new learning, PATCH that
+     one first. It is the skill that was in play, so it's the right one to
+     extend.
+  2. UPDATE AN EXISTING UMBRELLA (via skills_list + skill_view). If no
+     loaded skill fits but an existing class-level skill does, patch it.
+     Add a subsection, a pitfall, or broaden a trigger.
+  3. ADD A SUPPORT FILE under an existing umbrella. Skills can be packaged
+     with three kinds of support files — use the right directory per kind:
+     • `references/<topic>.md` — session-specific detail (error transcripts,
+       reproduction recipes, provider quirks) AND condensed knowledge banks:
+       quoted research, API docs, external authoritative excerpts, or domain
+       notes you found while working on the problem. Write it concise and
+       for the value of the task, not as a full mirror of upstream docs.
+     • `templates/<name>.<ext>` — starter files meant to be copied and
+       modified (boilerplate configs, scaffolding, a known-good example
+       the agent can `reproduce with modifications`).
+     • `scripts/<name>.<ext>` — statically re-runnable actions the skill
+       can invoke directly (verification scripts, fixture generators,
+       deterministic probes, anything the agent should run rather than
+       hand-type each time).
+     Add support files via skill_manage action=write_file with file_path
+     starting 'references/', 'templates/', or 'scripts/'. The umbrella's
+     SKILL.md should gain a one-line pointer to any new support file so
+     future agents know it exists.
+  4. CREATE A NEW CLASS-LEVEL UMBRELLA SKILL when no existing skill covers
+     the class. The name MUST be at the class level. The name MUST NOT be
+     a specific PR number, error string, feature codename, library-alone
+     name, or 'fix-X / debug-Y / audit-Z-today' session artifact. If the
+     proposed name only makes sense for today's task, it's wrong — fall
+     back to (1), (2), or (3).
+
+User-preference embedding (important): when the user expressed a
+style/format/workflow preference, the update belongs in the SKILL.md body,
+not just in memory. Memory captures 'who the user is and what the current
+situation and state of your operations are'; skills capture 'how to do this
+class of task for this user'. When they complain about how you handled a
+task, the skill that governs that task needs to carry the lesson.
+
+If you notice two existing skills that overlap, note it in your reply —
+the background curator handles consolidation at scale.
+
+Do NOT capture (these become persistent self-imposed constraints that bite
+you later when the environment changes):
+  • Environment-dependent failures: missing binaries, fresh-install errors,
+    post-migration path mismatches, 'command not found', unconfigured
+    credentials, uninstalled packages. The user can fix these — they are
+    not durable rules.
+  • Negative claims about tools or features ('browser tools do not work',
+    'X tool is broken', 'cannot use Y from execute_code'). These harden
+    into refusals the agent cites against itself for months after the
+    actual problem was fixed.
+  • Session-specific transient errors that resolved before the conversation
+    ended. If retrying worked, the lesson is the retry pattern, not the
+    original failure.
+  • One-off task narratives. A user asking 'summarize today's market' or
+    'analyze this PR' is not a class of work that warrants a skill.
+
+If a tool failed because of setup state, capture the FIX (install command,
+config step, env var to set) under an existing setup or troubleshooting
+skill — never 'this tool does not work' as a standalone constraint.
+
+'Nothing to save.' is a real option but should NOT be the default. If the
+session ran smoothly with no corrections and produced no new technique,
+just say 'Nothing to save.' and stop. Otherwise, act.</pre>
+<pre class="prompt" data-lang="zh">回顾上面的对话，更新 skill 库。要 ACTIVE（主动）——
+绝大多数 session 都应该产出至少一次 skill 更新，哪怕很小。
+什么都不做的一轮 review 是错过的学习机会，不是中立结果。
+
+目标形态：CLASS-LEVEL（类级）skill，每个都有内容丰富的 SKILL.md
+和用于存放 session 细节的 `references/` 子目录。不要做成一长串
+"一个 session 对应一个窄 skill" 的扁平列表。这个原则决定的是
+"怎么更新"，不是"要不要更新"。
+
+触发信号（任一即应行动）：
+  • 用户纠正了你的风格 / 语气 / 格式 / 可读性 / 啰嗦程度。
+    带挫败感的信号——'stop doing X' / '这太冗长了' / '别用这种格式' /
+    '为什么要解释' / '直接给答案' / '你老是 Y 我特别烦' / 明确说
+    'remember this'——都是 FIRST-CLASS 的 skill 信号，不只是 memory
+    信号。更新相关 skill，把偏好 embed 进去，下一个 session 就已经知道。
+  • 用户纠正了你的 workflow / 做法 / 步骤顺序。把这次纠正编码进
+    管这类任务的 skill，写成 pitfall 或显式步骤。
+  • 出现了未来 session 能用的 non-trivial 技术 / 修复 / 绕路 /
+    debug 路径 / 工具使用模式。捕获下来。
+  • 本 session 加载或查过的某个 skill 被证明 wrong / missing a step /
+    outdated。立刻 patch。
+
+偏好顺序——优先选最早能 fit 的动作，但只要触发信号出现就必须挑一个：
+  1. UPDATE A CURRENTLY-LOADED SKILL（修改本对话已加载的 skill）。
+     回看对话里用户通过 /skill-name 加载、或你用 skill_view 读过的
+     skill。如果其中哪个覆盖这次的新经验，优先 PATCH 它——它在场，
+     就是该扩展的那个。
+  2. UPDATE AN EXISTING UMBRELLA（修改已有 umbrella skill）。
+     如果没有已加载的 skill 合适，但有一个 class-level 的 skill 合适，
+     就 patch 那个。加一个子小节、一条 pitfall、或拓宽一个 trigger。
+     用 skills_list + skill_view 找到它。
+  3. ADD A SUPPORT FILE under an existing umbrella（往 umbrella 下加
+     支持文件）。skill 可以打包三种支持文件，按种类放到对应目录：
+     • `references/<topic>.md` —— session 特定细节（error 记录、复现
+       步骤、provider 怪异行为）以及精炼的知识库（引用的 research、
+       API 文档片段、外部权威节录、领域笔记）。要简洁、贴任务，不要
+       做成 upstream 文档的完整镜像。
+     • `templates/<name>.<ext>` —— 用于复制改造的起步文件（boilerplate
+       config、脚手架、"复制再改"的已知好示例）。
+     • `scripts/<name>.<ext>` —— skill 可以直接调用的静态可重跑动作
+       （验证脚本、fixture 生成器、确定性探测——任何不希望 agent 每次
+       手敲的东西）。
+     用 skill_manage action=write_file 加，file_path 以 'references/' /
+     'templates/' / 'scripts/' 开头。umbrella 的 SKILL.md 应该加一行
+     指向新支持文件的指针，让未来的 agent 知道它存在。
+  4. CREATE A NEW CLASS-LEVEL UMBRELLA SKILL（新建 class-level umbrella）
+     ——仅当没有任何已有 skill 覆盖这一类。名字必须在类级别。
+     绝对不要用 PR 号、特定 error 字符串、feature 代号、单独的库名、
+     或 'fix-X / debug-Y / audit-Z-today' 这种 session artifact 当名字。
+     如果名字只对今天的任务有意义，就是错的——回到 (1)(2)(3)。
+
+User-preference embedding（重要）：用户表达 style / format / workflow
+偏好时，更新属于 SKILL.md body，不只是 memory。memory 记的是"用户是谁、
+当前对话和操作状态如何"；skill 记的是"如何为这位用户做这类任务"。
+当用户对你处理某类任务的方式表达不满时，管这类任务的 skill 必须承载这条
+教训。
+
+如果你发现两个已存在 skill 有 overlap，在回复里提一句——后台 curator
+负责大规模整合。
+
+不要 capture（这些会硬化成持久的自我约束，环境一变就咬到自己）：
+  • 环境依赖的失败：缺二进制、fresh-install 报错、migration 后路径不一致、
+    'command not found'、未配 credential、未装包。用户自己能修——
+    这不是 durable 规则。
+  • 关于工具或功能的负面断言（'browser tools 不能用' / 'X 工具坏了' /
+    'execute_code 里调不到 Y'）。这种会硬化成 agent 反复对自己讲"不能用"
+    的拒绝，且会在真正的问题修复几个月之后还继续生效。
+  • Session 内 transient error，对话结束前自己 resolve 了。如果重试成了，
+    教训是 retry pattern，不是最初的 failure。
+  • One-off 任务叙事。用户问 '总结今天的市场' 或 '分析这个 PR' 不构成
+    一类工作。
+
+如果某次工具因 setup 状态失败，捕获的应该是 FIX（install 命令、config
+步骤、env var）——写到现有的 setup / troubleshooting skill 里——
+永远不要写成 '这工具不能用' 这种独立约束。
+
+'Nothing to save.' 是真选项，但不应该是默认。如果 session 顺利、无纠正、
+也没产出新技术，就说 'Nothing to save.' 然后停止。否则——行动。</pre>
+</div>
+</div>
+</details>
+
+<details>
+<summary>③ Combined Review Prompt（memory + skill 同时）</summary>
+<div>
+<p>同骨架的更长版本，把 memory + skill 两条线并到一份 prompt 里，要求 fork 同时审视用户画像信息 + 是否有值得沉淀的经验。结构和 ② 完全一致，只是开头多一段 memory 引导。位置：<code>background_review.py:141-215</code>。</p>
+</div>
+</details>
+
+<!-- ============================ -->
+<!-- §6 skill_manage 工具         -->
+<!-- ============================ -->
+<h2>6 · skill_manage 工具的 6 个 action</h2>
+
+<p>无论是主 agent 主动写 skill，还是 review fork 自动整理 skill，还是 curator 在长周期做整合，最终都通过同一个工具 <code>skill_manage</code>（<code>tools/skill_manager_tool.py:713-790</code>）：</p>
+
+<table>
+<thead>
+<tr><th>action</th><th>作用</th><th>关键参数</th></tr>
+</thead>
+<tbody>
+<tr><td><code>create</code></td><td>创建新 skill，写入 <code>~/.hermes/skills/&lt;name&gt;/SKILL.md</code></td><td><code>name</code>, <code>content</code>（完整 YAML frontmatter + body）, 可选 <code>category</code></td></tr>
+<tr><td><code>edit</code></td><td>完全重写某个 skill 的 <code>SKILL.md</code></td><td><code>name</code>, <code>content</code>（完整新版本）</td></tr>
+<tr><td><code>patch</code></td><td>对 <code>SKILL.md</code> <strong>或任意支持文件</strong>做 fuzzy find-and-replace</td><td><code>name</code>, <code>old_string</code>, <code>new_string</code>, 可选 <code>file_path</code> / <code>replace_all</code></td></tr>
+<tr><td><code>delete</code></td><td>"删除" skill（实际是移到 <code>.archive/</code>，可恢复）</td><td><code>name</code>, 可选 <code>absorbed_into</code></td></tr>
+<tr><td><code>write_file</code></td><td>在 skill 目录下写一份支持文件</td><td><code>name</code>, <code>file_path</code>（必须以 <code>references/</code> / <code>templates/</code> / <code>scripts/</code> 开头）, <code>file_content</code></td></tr>
+<tr><td><code>remove_file</code></td><td>移除支持文件（删空后自动 <code>rmdir</code> 父目录）</td><td><code>name</code>, <code>file_path</code></td></tr>
+</tbody>
+</table>
+
+<h3>每次成功后做的三件事</h3>
+
+<ol>
+  <li><strong>清空 skill system prompt cache</strong>，下一轮立刻看到更新</li>
+  <li><strong>Provenance 打标</strong>：<code>create</code> 时若处在 review fork 内（<code>is_background_review()</code>），标记为 <span class="hl-curator">agent-created</span>；前台用户主动 create 的不打标</li>
+  <li><strong>Telemetry 计数</strong>：<code>patch/edit/write_file/remove_file</code> 时 <code>bump_patch(name)</code> 累加修订次数；<code>delete</code> 时 <code>forget(name)</code></li>
+</ol>
+
+<p class="note">第 2 步的 provenance 是 Curator 工作的前提——Curator <strong>只动 agent-created 的 skill</strong>，永远不会改用户主动创建的 skill。</p>
+
+<!-- ============================ -->
+<!-- §7 目录结构                  -->
+<!-- ============================ -->
+<h2>7 · 目录结构与持久化</h2>
+
+<p>所有 agent 自己生成 / 更新的 skill 和 memory 都落到本机 <code>~/.hermes/</code> 下：</p>
+
+<div class="tree">
+<span class="dir">~/.hermes/</span><br>
+├── <span class="dir">skills/</span>                              <span class="com"># skill 总目录</span><br>
+│   ├── <span class="dir">.curator_state</span>                   <span class="com"># curator 调度状态 (JSON)</span><br>
+│   ├── <span class="dir">.archive/</span>                        <span class="com"># 被 archive 的 skill（curator 软删除）</span><br>
+│   │   └── <span class="dir">&lt;old-skill&gt;/</span> ...<br>
+│   │<br>
+│   ├── <span class="dir">&lt;skill-name&gt;/</span>                  <span class="com"># 一个 umbrella skill</span><br>
+│   │   ├── SKILL.md                       <span class="com"># YAML frontmatter + Markdown body（必需）</span><br>
+│   │   ├── <span class="dir">references/</span>                  <span class="com"># session 细节 / 知识库片段</span><br>
+│   │   │   ├── error-transcript-2026-04-12.md<br>
+│   │   │   └── api-quirks.md<br>
+│   │   ├── <span class="dir">templates/</span>                   <span class="com"># 可复制改造的起步文件</span><br>
+│   │   │   └── starter.toml<br>
+│   │   └── <span class="dir">scripts/</span>                     <span class="com"># 可静态重跑的脚本</span><br>
+│   │       └── verify.py<br>
+│   │<br>
+│   └── <span class="dir">&lt;category&gt;/</span>                     <span class="com"># 可选分类层</span><br>
+│       └── <span class="dir">&lt;skill-name&gt;/</span><br>
+│           └── SKILL.md<br>
+│<br>
+├── <span class="dir">memories/</span>                            <span class="com"># memory 总目录</span><br>
+│   ├── MEMORY.md                          <span class="com"># agent 自己的笔记，默认上限 2200 字符</span><br>
+│   ├── MEMORY.md.lock                     <span class="com"># 写入文件锁</span><br>
+│   ├── USER.md                            <span class="com"># 用户画像，默认上限 1375 字符</span><br>
+│   └── USER.md.lock<br>
+│<br>
+└── <span class="dir">logs/curator/</span>                        <span class="com"># curator 每次运行的报告</span><br>
+    └── <span class="dir">20260511-143218/</span><br>
+        ├── run.json                       <span class="com"># 结构化结果（model、tool_calls、summary）</span><br>
+        └── REPORT.md                      <span class="com"># 人类可读的整理报告</span><br>
+</div>
+
+<h3>MEMORY.md / USER.md 的格式</h3>
+
+<p>纯文本 Markdown，条目之间用 <code>\n§\n</code> 分隔：</p>
+
+<pre>User prefers concise responses, no preamble.
+
+§
+
+Project uses pytest with xdist; tests live in tests/ at repo root.
+
+§
+
+User is on macOS arm64; ripgrep is preinstalled as `rg`.</pre>
+
+<p>在 system prompt 里渲染时带实时使用率：</p>
+
+<pre>══════════════════════════════════════════════
+MEMORY (your personal notes) [45% — 990/2200 chars]
+══════════════════════════════════════════════
+User prefers concise responses, no preamble.
+
+§
+
+Project uses pytest with xdist; tests live in tests/ at repo root.</pre>
+
+<!-- ============================ -->
+<!-- §8 常驻 system prompt        -->
+<!-- ============================ -->
+<h2>8 · 常驻 System Prompt（主 agent 视角）</h2>
+
+<p>Review fork 是<strong>被动</strong>触发的安全网。主 agent 自己其实也被持续提醒"该记 / 该改"——这些提醒以 <code>MEMORY_GUIDANCE</code> / <code>SKILLS_GUIDANCE</code> 形式注入主 agent 的 system prompt（<code>agent/prompt_builder.py:150-186</code>）。</p>
+
+<details open>
+<summary>MEMORY_GUIDANCE</summary>
+<div>
+<div class="prompt-block">
+<pre class="prompt" data-lang="en">You have persistent memory across sessions. Save durable facts using the memory
+tool: user preferences, environment details, tool quirks, and stable conventions.
+Memory is injected into every turn, so keep it compact and focused on facts that
+will still matter later.
+
+Prioritize what reduces future user steering — the most valuable memory is one
+that prevents the user from having to correct or remind you again. User
+preferences and recurring corrections matter more than procedural task details.
+
+Do NOT save task progress, session outcomes, completed-work logs, or temporary
+TODO state to memory; use session_search to recall those from past transcripts.
+Specifically: do not record PR numbers, issue numbers, commit SHAs, 'fixed bug X',
+'submitted PR Y', 'Phase N done', file counts, or any artifact that will be
+stale in 7 days. If a fact will be stale in a week, it does not belong in memory.
+
+If you've discovered a new way to do something, solved a problem that could be
+necessary later, save it as a skill with the skill tool.
+
+Write memories as declarative facts, not instructions to yourself.
+'User prefers concise responses' ✓ — 'Always respond concisely' ✗.
+'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗.
+Imperative phrasing gets re-read as a directive in later sessions and can
+cause repeated work or override the user's current request. Procedures and
+workflows belong in skills, not memory.</pre>
+<pre class="prompt" data-lang="zh">你有跨 session 的持久 memory。用 memory 工具保存 durable（持久）的事实：
+用户偏好、环境细节、工具怪异行为、稳定的约定。memory 会被注入每一个 turn，
+所以保持紧凑、聚焦于"未来仍然有效"的事实。
+
+优先记那些能减少未来 user steering 的——最有价值的 memory 是能避免用户
+再次纠正或提醒你的事实。用户偏好和反复出现的纠正，比流程性任务细节
+更重要。
+
+不要往 memory 里存任务进度、session 结果、完成日志、临时 TODO；
+用 session_search 从过去的对话里回忆这些。具体地：不要记 PR 号、issue 号、
+commit SHA、'修了 bug X'、'提交了 PR Y'、'Phase N 完成'、文件计数，或者
+任何 7 天内会过期的 artifact。如果一个事实一周内就会 stale，它不属于
+memory。
+
+如果你发现了新做法、解决了未来可能需要的问题，用 skill 工具存成 skill。
+
+把 memory 写成 declarative（陈述）事实，不要写成给自己的指令。
+'User prefers concise responses' ✓ —— 'Always respond concisely' ✗。
+'Project uses pytest with xdist' ✓ —— 'Run tests with pytest -n 4' ✗。
+命令式 phrasing 会被后续 session 当成指令重新执行，可能 override 当前
+用户的请求 / 引发重复工作。流程和 workflow 属于 skill，不是 memory。</pre>
+</div>
+
+<p>5 条核心规则：</p>
+<ol>
+  <li><strong>优先级</strong>：最有价值的 memory 是减少未来 user steering 的事实</li>
+  <li><strong>7 天衰减</strong>：If a fact will be stale in a week, it does not belong in memory</li>
+  <li><strong>负面清单</strong>：PR / issue / SHA / "fixed bug X" / "Phase N done" / file counts</li>
+  <li><strong>declarative ≠ imperative</strong>："User prefers X" ✓ 而非 "Always do X" ✗</li>
+  <li><strong>memory vs skill 分工</strong>：流程性内容写 skill，事实性内容写 memory</li>
+</ol>
+</div>
+</details>
+
+<details>
+<summary>SKILLS_GUIDANCE</summary>
+<div>
+<div class="prompt-block">
+<pre class="prompt" data-lang="en">After completing a complex task (5+ tool calls), fixing a tricky error,
+or discovering a non-trivial workflow, save the approach as a skill with
+skill_manage so you can reuse it next time.
+
+When using a skill and finding it outdated, incomplete, or wrong, patch it
+immediately with skill_manage(action='patch') — don't wait to be asked.
+Skills that aren't maintained become liabilities.</pre>
+<pre class="prompt" data-lang="zh">完成一个复杂任务（5+ tool calls）、修好一个棘手错误、或发现一个 non-trivial
+workflow 之后，用 skill_manage 把这个做法存成 skill，下次能复用。
+
+在用某个 skill 时如果发现它过时 / 不完整 / 错误，立刻用
+skill_manage(action='patch') 修——别等用户提醒。不被维护的 skill
+会变成负债。</pre>
+</div>
+</div>
+</details>
+
+<!-- ============================ -->
+<!-- §9 Curator                   -->
+<!-- ============================ -->
+<h2>9 · Curator：跨 session 的长期管家</h2>
+
+<p>这是本文档最长的一节——因为 Curator 是<strong>独立的第二条 skill 进化路径</strong>，和前面 1-8 节讲的 per-turn review 完全不同。Per-turn review 解决的是"<strong>当下这段对话</strong>有没有该记的"，curator 解决的是"<strong>整个 skill 库</strong>是不是越来越乱"。</p>
+
+<h3>9.1 为什么需要 Curator？</h3>
+
+<p>per-turn review fork 每天都在生 skill。三个月后，会出现这些问题：</p>
+
+<div class="grid2">
+  <div class="card curator-card">
+    <h4>问题 ① 窄而碎</h4>
+    <p style="font-size:13px;margin:0">出现一堆名字像 <code>fix-build-error-2026-04-12</code> 的 skill——当初某个 session 临时创建的，根本不是 class-level。</p>
+  </div>
+  <div class="card curator-card">
+    <h4>问题 ② 重复堆叠</h4>
+    <p style="font-size:13px;margin:0"><code>pr-review-checklist</code> / <code>pr-triage</code> / <code>pr-salvage</code> 三个 skill 主题高度重叠，应该 merge 成一个 umbrella。</p>
+  </div>
+  <div class="card curator-card">
+    <h4>问题 ③ 长期不用</h4>
+    <p style="font-size:13px;margin:0">某个 skill 几个月没被 view 也没被 patch——也许早就过时了，但它还在 system prompt 索引里占位。</p>
+  </div>
+  <div class="card curator-card">
+    <h4>问题 ④ 失效但未察觉</h4>
+    <p style="font-size:13px;margin:0">某个 skill 当初有效，但所引用的工具 / API 已经变了。需要有人定期巡检。</p>
+  </div>
+</div>
+
+<p>Curator 就是定期巡检 + 整合的"图书管理员"。</p>
+
+<h3>9.2 触发条件：不是 cron，是 inactivity-triggered</h3>
+
+<p>Curator <strong>没有独立的后台 daemon 在跑</strong>。它的入口是 <code>maybe_run_curator()</code>（<code>agent/curator.py:1763</code>），在两个时机被显式调用：</p>
+
+<table>
+<thead>
+<tr><th>时机</th><th>调用方</th><th>idle 假设</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>CLI 启动时</strong></td>
+  <td><code>cli.py:11702</code> 在用户启动 <code>hermes</code> 命令行时尝试一次</td>
+  <td><code>idle_for_seconds=float("inf")</code>（用户刚启动 = 完全 idle）</td>
+</tr>
+<tr>
+  <td><strong>Gateway 运行时</strong></td>
+  <td><code>gateway/run.py:16780</code> 在 web gateway 长期运行时按间隔检查</td>
+  <td>由 gateway 测量真实 idle 时长</td>
+</tr>
+<tr>
+  <td><strong>手动</strong></td>
+  <td><code>hermes curator run</code> / <code>hermes curator run --dry</code></td>
+  <td>用户主动触发，绕过 idle gate</td>
+</tr>
+</tbody>
+</table>
+
+<p><code>maybe_run_curator()</code> 内部有两道闸门：</p>
+
+<pre>def maybe_run_curator(*, idle_for_seconds, on_summary):
+    if not should_run_now():           # 闸门 ①：距上次跑足够久吗？
+        return None
+    if idle_for_seconds is not None:
+        if idle_for_seconds &lt; min_idle_s:  # 闸门 ②：agent 真的空闲吗？
+            return None
+    return run_curator_review(on_summary=on_summary)</pre>
+
+<p>两道闸门都过了才真正启动。失败始终 swallowed（<code>except Exception: return None</code>），永远不会破坏 session 启动。</p>
+
+<h3>9.3 关键默认值（<code>agent/curator.py:56-59</code>）</h3>
+
+<table>
+<thead><tr><th>常量</th><th>默认</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>DEFAULT_INTERVAL_HOURS</code></td><td><strong>24 × 7 = 168h</strong></td><td>两次 curator 之间的最小间隔（约一周一次）</td></tr>
+<tr><td><code>DEFAULT_MIN_IDLE_HOURS</code></td><td><strong>2h</strong></td><td>agent 至少 idle 多久才允许触发（gateway 模式下用）</td></tr>
+<tr><td><code>DEFAULT_STALE_AFTER_DAYS</code></td><td><strong>30 天</strong></td><td>skill 多久没被碰过自动标 stale</td></tr>
+<tr><td><code>DEFAULT_ARCHIVE_AFTER_DAYS</code></td><td><strong>90 天</strong></td><td>skill 多久没被碰过自动 archive</td></tr>
+</tbody>
+</table>
+
+<h3>9.4 Skill 生命周期状态机</h3>
+
+<p>每个 agent-created skill 在 <code>tools/skill_usage.py</code> 里都有 <code>state</code> 字段，三个值：</p>
+
+<div class="state-machine">
+<svg viewBox="0 0 800 240" xmlns="http://www.w3.org/2000/svg">
+  <!-- States -->
+  <rect x="60"  y="90" width="160" height="60" rx="8" fill="#3a8a4f" opacity="0.9"/>
+  <text x="140" y="120" text-anchor="middle" fill="white" font-size="16" font-weight="600">active</text>
+  <text x="140" y="138" text-anchor="middle" fill="white" font-size="11">正常状态</text>
+
+  <rect x="320" y="90" width="160" height="60" rx="8" fill="#d97e2c" opacity="0.9"/>
+  <text x="400" y="120" text-anchor="middle" fill="white" font-size="16" font-weight="600">stale</text>
+  <text x="400" y="138" text-anchor="middle" fill="white" font-size="11">30 天没被碰过</text>
+
+  <rect x="580" y="90" width="160" height="60" rx="8" fill="#7a3f9e" opacity="0.9"/>
+  <text x="660" y="120" text-anchor="middle" fill="white" font-size="16" font-weight="600">archived</text>
+  <text x="660" y="138" text-anchor="middle" fill="white" font-size="11">90 天没被碰过</text>
+
+  <!-- Arrows forward -->
+  <line x1="220" y1="120" x2="320" y2="120" stroke="#1a1a1a" stroke-width="2" marker-end="url(#a-state)"/>
+  <text x="270" y="110" text-anchor="middle" font-size="11">≥ 30d</text>
+
+  <line x1="480" y1="120" x2="580" y2="120" stroke="#1a1a1a" stroke-width="2" marker-end="url(#a-state)"/>
+  <text x="530" y="110" text-anchor="middle" font-size="11">≥ 90d</text>
+
+  <!-- Reactivation back -->
+  <path d="M 320 145 Q 270 200 220 145" stroke="#3a8a4f" stroke-width="2" fill="none" marker-end="url(#a-reactivate)"/>
+  <text x="270" y="200" text-anchor="middle" font-size="11" fill="#3a8a4f">用了一下 → 复活</text>
+
+  <!-- Notes below -->
+  <text x="140" y="180" text-anchor="middle" font-size="11" fill="#6b6b6b">在 ~/.hermes/skills/&lt;name&gt;/</text>
+  <text x="400" y="180" text-anchor="middle" font-size="11" fill="#6b6b6b">仍在原位置</text>
+  <text x="660" y="180" text-anchor="middle" font-size="11" fill="#6b6b6b">移到 .archive/</text>
+
+  <text x="400" y="225" text-anchor="middle" font-size="11" fill="#6b6b6b">Pinned skills 跳过所有 auto-transition</text>
+
+  <defs>
+    <marker id="a-state" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a1a1a"/>
+    </marker>
+    <marker id="a-reactivate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3a8a4f"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+
+<p>状态转换的 anchor 是 <code>last_activity_at</code>（最后一次被 view / 用 / patch 的时间）。逻辑（<code>curator.py:282-294</code>）：</p>
+
+<ul>
+  <li><code>anchor ≤ 90d 前</code> 且当前不是 archived → <strong>archive</strong>（移到 <code>.archive/</code>）</li>
+  <li><code>anchor ≤ 30d 前</code> 且当前是 active → <strong>标 stale</strong></li>
+  <li><code>anchor &gt; 30d 内</code> 且当前是 stale → <strong>reactivate</strong>（恢复 active）</li>
+</ul>
+
+<h3>9.5 一次 Curator 运行的完整流程</h3>
+
+<p><code>run_curator_review()</code>（<code>agent/curator.py:1369</code>）分四步：</p>
+
+<div class="seq">
+<svg viewBox="0 0 900 110" xmlns="http://www.w3.org/2000/svg">
+  <!-- Step 1: snapshot -->
+  <rect x="40" y="20" width="180" height="70" rx="6" fill="#5a6b5a" opacity="0.85"/>
+  <text x="130" y="46" text-anchor="middle" fill="white" font-size="13" font-weight="600">Step 1 · 快照</text>
+  <text x="130" y="65" text-anchor="middle" fill="white" font-size="11">curator_backup.snapshot_skills()</text>
+  <text x="130" y="81" text-anchor="middle" fill="white" font-size="10">备份整个 skills/ 目录</text>
+
+  <line x1="220" y1="55" x2="270" y2="55" stroke="#1a1a1a" stroke-width="2" marker-end="url(#a-step)"/>
+
+  <!-- Step 2: pure auto transitions -->
+  <rect x="270" y="20" width="180" height="70" rx="6" fill="#3a8a4f" opacity="0.85"/>
+  <text x="360" y="46" text-anchor="middle" fill="white" font-size="13" font-weight="600">Step 2 · 纯代码转换</text>
+  <text x="360" y="65" text-anchor="middle" fill="white" font-size="11">apply_automatic_transitions()</text>
+  <text x="360" y="81" text-anchor="middle" fill="white" font-size="10">active ↔ stale ↔ archived</text>
+
+  <line x1="450" y1="55" x2="500" y2="55" stroke="#1a1a1a" stroke-width="2" marker-end="url(#a-step)"/>
+
+  <!-- Step 3: LLM pass -->
+  <rect x="500" y="20" width="180" height="70" rx="6" fill="#7a3f9e" opacity="0.85"/>
+  <text x="590" y="46" text-anchor="middle" fill="white" font-size="13" font-weight="600">Step 3 · LLM 整合</text>
+  <text x="590" y="65" text-anchor="middle" fill="white" font-size="11">_run_llm_review()</text>
+  <text x="590" y="81" text-anchor="middle" fill="white" font-size="10">fork AIAgent</text>
+
+  <line x1="680" y1="55" x2="730" y2="55" stroke="#1a1a1a" stroke-width="2" marker-end="url(#a-step)"/>
+
+  <!-- Step 4: report -->
+  <rect x="730" y="20" width="140" height="70" rx="6" fill="#2c5f9e" opacity="0.85"/>
+  <text x="800" y="46" text-anchor="middle" fill="white" font-size="13" font-weight="600">Step 4 · 报告</text>
+  <text x="800" y="65" text-anchor="middle" fill="white" font-size="11">_write_run_report()</text>
+  <text x="800" y="81" text-anchor="middle" fill="white" font-size="10">run.json + REPORT.md</text>
+
+  <defs>
+    <marker id="a-step" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a1a1a"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+
+<div class="grid2">
+  <div class="card" style="border-left:4px solid var(--trigger)">
+    <h4 style="color:var(--trigger)">Step 2 详情 · 纯代码转换</h4>
+    <p style="margin:0;font-size:13px">不调 LLM，纯 Python 逻辑：</p>
+    <ul style="margin:6px 0 0;padding-left:18px;font-size:13px">
+      <li>遍历所有 agent-created skill</li>
+      <li>读每个 skill 的 <code>last_activity_at</code></li>
+      <li>按 30d / 90d 阈值转状态</li>
+      <li><span class="hl-warn">pinned skill 跳过</span></li>
+    </ul>
+  </div>
+  <div class="card" style="border-left:4px solid var(--curator)">
+    <h4 style="color:var(--curator)">Step 3 详情 · LLM fork 配置（对比 per-turn review）</h4>
+    <ul style="margin:6px 0 0;padding-left:18px;font-size:13px">
+      <li><code>max_iterations=<strong>9999</strong></code>（不是 16——需要扫几百个 skill）</li>
+      <li><code>platform="curator"</code>，走独立 auxiliary 模型</li>
+      <li><code>skip_memory=True, skip_context_files=True</code></li>
+      <li>不继承主 session 的 prompt cache（独立运行）</li>
+      <li>工具：<code>skills_list</code> / <code>skill_view</code> / <code>skill_manage</code> / <code>terminal</code></li>
+    </ul>
+  </div>
+</div>
+
+<h3>9.6 Curator 看到的 candidate list</h3>
+
+<p>在 LLM pass 之前，<code>_render_candidate_list()</code>（<code>curator.py:1349</code>）把所有 agent-created skill 的元数据渲染成一段文本，作为 LLM 的输入参考：</p>
+
+<pre>Agent-created skills (47):
+
+- pr-review-checklist          state=active   pinned=no   activity=12  use=8   view=5   patches=3  last_activity=2026-05-12T09:24:18Z
+- pr-triage                    state=active   pinned=no   activity=4   use=2   view=1   patches=0  last_activity=2026-04-28T15:11:02Z
+- pr-salvage                   state=stale    pinned=no   activity=1   use=0   view=1   patches=0  last_activity=2026-04-02T08:55:30Z
+- fix-build-error-2026-04-12   state=active   pinned=no   activity=2   use=1   view=0   patches=1  last_activity=2026-04-12T14:22:11Z
+- ollama-debug-stream-stall    state=stale    pinned=no   activity=1   use=0   view=0   patches=0  last_activity=2026-03-18T10:00:00Z
+- ollama-config                state=active   pinned=yes  activity=8   use=6   view=3   patches=2  last_activity=2026-05-15T17:42:00Z
+...</pre>
+
+<p>每个 skill 一行，含 6 项 telemetry 指标：</p>
+<ul>
+  <li><code>state</code>：active / stale / archived</li>
+  <li><code>pinned</code>：用户是否手动钉住（钉住的 LLM 不会动）</li>
+  <li><code>activity</code>：总互动次数（view + use + patch）</li>
+  <li><code>use</code>：被 agent 真正调用过几次</li>
+  <li><code>view</code>：被 <code>skill_view()</code> 查看过几次</li>
+  <li><code>patches</code>：被 patch / edit 过几次</li>
+  <li><code>last_activity</code>：上次活动时间戳</li>
+</ul>
+
+<h3>9.7 Curator 的 LLM Prompt（重点）</h3>
+
+<p><code>CURATOR_REVIEW_PROMPT</code>（<code>curator.py:330-445</code>）和 per-turn review 的 skill prompt <strong>完全不同</strong>。后者是"看这次对话有没有该存的"，前者是 <span class="hl-curator">"看整个库该怎么 umbrella 化"</span>。这段 prompt 极度强势，明确指令 LLM 必须 consolidate，"不动"不是中立选项。</p>
+
+<p>核心要点：</p>
+
+<table>
+<thead><tr><th>原则</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td><strong>定位</strong></td><td>这是 <strong>umbrella-building consolidation pass</strong>，不是被动审计，也不是去重器</td></tr>
+<tr><td><strong>目标库形态</strong></td><td>"a library of class-level instructions and experiential knowledge"——一个由 class-level 指令和实战经验组成的库，不是"几百个一 session 一 bug 的窄 skill"</td></tr>
+<tr><td><strong>核心论点</strong></td><td>agent 检索 skill 是按 description 匹配，不是按名字精确匹配——<strong>一个带子小节的 umbrella 比五个窄 sibling 更可发现</strong></td></tr>
+<tr><td><strong>方法</strong></td><td>找 prefix cluster（共享首词或域关键词的 skill 群），对每个 2+ 成员的 cluster 问"这些应该是一个 umbrella 类，还是 N 个独立 skill？"，是 umbrella 就 merge</td></tr>
+<tr><td><strong>3 种 consolidation 策略</strong></td><td>(a) merge 进已有 umbrella  (b) 新建 umbrella  (c) 降级成 references/templates/scripts</td></tr>
+<tr><td><strong>5 条 hard rule</strong></td><td>① 不动 bundled / hub skill；② 不 delete，只 archive；③ 不动 pinned；④ 不能用"use_count=0"当跳过理由；⑤ 不能用"它们 trigger 不同"当跳过理由</td></tr>
+<tr><td><strong>kpi</strong></td><td>"如果你以 &lt; 10 个 archive 结束这一轮，说明你太早停了——回去看你放过的 cluster"</td></tr>
+<tr><td><strong>必须输出 YAML</strong></td><td>每个 archive 必须分类成 <code>consolidations:</code>（合并到哪个 umbrella）或 <code>prunings:</code>（纯删除）之一，下游 cron job 据此迁移引用</td></tr>
+</tbody>
+</table>
+
+<details class="curator" open>
+<summary>CURATOR_REVIEW_PROMPT 全文</summary>
+<div>
+<div class="prompt-block">
+<pre class="prompt-curator" data-lang="en">You are running as Hermes' background skill CURATOR. This is an
+UMBRELLA-BUILDING consolidation pass, not a passive audit and not a
+duplicate-finder.
+
+The goal of the skill collection is a LIBRARY OF CLASS-LEVEL
+INSTRUCTIONS AND EXPERIENTIAL KNOWLEDGE. A collection of hundreds of
+narrow skills where each one captures one session's specific bug is
+a FAILURE of the library — not a feature. An agent searching skills
+matches on descriptions, not on exact names; one broad umbrella
+skill with labeled subsections beats five narrow siblings for
+discoverability, not the other way around.
+
+The right target shape is CLASS-LEVEL skills with rich SKILL.md
+bodies + `references/`, `templates/`, and `scripts/` subfiles for
+session-specific detail — not one-session-one-skill micro-entries.
+
+Hard rules — do not violate:
+1. DO NOT touch bundled or hub-installed skills. The candidate list
+   below is already filtered to agent-created skills only.
+2. DO NOT delete any skill. Archiving (moving the skill's directory
+   into ~/.hermes/skills/.archive/) is the maximum destructive action.
+   Archives are recoverable; deletion is not.
+3. DO NOT touch skills shown as pinned=yes. Skip them entirely.
+4. DO NOT use usage counters as a reason to skip consolidation. The
+   counters are new and often mostly zero. Judge overlap on CONTENT,
+   not on use_count. 'use=0' is not evidence a skill is valuable; it's
+   absence of evidence either way.
+5. DO NOT reject consolidation on the grounds that 'each skill has
+   a distinct trigger'. Pairwise distinctness is the wrong bar. The
+   right bar is: 'would a human maintainer write this as N separate
+   skills, or as one skill with N labeled subsections?' When the
+   answer is the latter, merge.
+
+How to work — not optional:
+1. Scan the full candidate list. Identify PREFIX CLUSTERS (skills
+   sharing a first word or domain keyword). Examples you are likely
+   to find: hermes-config-*, hermes-dashboard-*, gateway-*, codex-*,
+   ollama-*, anthropic-*, gemini-*, mcp-*, salvage-*, pr-*,
+   competitor-*, python-*, security-*, etc. Expect 10-25 clusters.
+2. For each cluster with 2+ members, do NOT ask 'are these pairs
+   overlapping?' — ask 'what is the UMBRELLA CLASS these skills all
+   serve? Would a maintainer name that class and write one skill for
+   it?' If yes, pick (or create) the umbrella and absorb the siblings
+   into it.
+3. Three ways to consolidate — use the right one per cluster:
+   a. MERGE INTO EXISTING UMBRELLA — one skill in the cluster is
+      already broad enough to be the umbrella. Patch it to add a
+      labeled section for each sibling's unique insight, then archive
+      the siblings.
+   b. CREATE A NEW UMBRELLA SKILL.md — no existing member is broad
+      enough. Use skill_manage action=create to write a new class-
+      level skill whose SKILL.md covers the shared workflow and has
+      short labeled subsections. Archive the now-absorbed narrow
+      siblings.
+   c. DEMOTE TO REFERENCES/TEMPLATES/SCRIPTS — a sibling has
+      narrow-but-valuable session-specific content. Move it into the
+      umbrella's appropriate support directory:
+      • `references/<topic>.md` for session-specific detail OR
+        condensed knowledge banks (quoted research, API docs excerpts,
+        domain notes, provider quirks, reproduction recipes)
+      • `templates/<name>.<ext>` for starter files meant to be
+        copied and modified
+      • `scripts/<name>.<ext>` for statically re-runnable actions
+        (verification scripts, fixture generators, probes)
+      Then archive the old sibling.
+4. Also flag skills whose NAME is too narrow (contains a PR number,
+   a feature codename, a specific error string, an 'audit' /
+   'diagnosis' / 'salvage' session artifact). These almost always
+   belong as a subsection or support file under a class-level umbrella.
+5. Iterate. After one consolidation round, scan the remaining set
+   and look for the NEXT umbrella opportunity. Don't stop after 3
+   merges.
+
+Your toolset:
+  - skills_list, skill_view        — read the current landscape
+  - skill_manage action=patch      — add sections to the umbrella
+  - skill_manage action=create     — create a new umbrella SKILL.md
+  - skill_manage action=write_file — add a references/, templates/,
+    or scripts/ file under an existing skill
+  - skill_manage action=delete     — archive a skill. MUST pass
+    `absorbed_into=<umbrella>` when you've merged its content into
+    another skill, or `absorbed_into=""` when you're truly pruning
+    with no forwarding target.
+  - terminal                       — mv a sibling into the archive
+    OR move its content into a support subfile
+
+'keep' is a legitimate decision ONLY when the skill is already a
+class-level umbrella and none of the proposed merges would improve
+discoverability. 'This is narrow but distinct from its siblings'
+is NOT a reason to keep — it's a reason to move it under an
+umbrella as a subsection or support file.
+
+Expected output: real umbrella-ification. Process every obvious
+cluster. If you end the pass with fewer than 10 archives, you
+stopped too early — go back and look at the clusters you left
+alone.
+
+When done, write a human summary AND a structured machine-readable
+block so downstream tooling can distinguish consolidation from
+pruning. Format EXACTLY:
+
+## Structured summary (required)
+```yaml
+consolidations:
+  - from: <old-skill-name>
+    into: <umbrella-skill-name>
+    reason: <one short sentence — why merged, not just 'similar'>
+prunings:
+  - name: <skill-name>
+    reason: <one short sentence — why archived with no merge target>
+```
+
+Every skill you moved to .archive/ MUST appear in exactly one of the
+two lists. If you consolidated X into umbrella Y, X goes under
+`consolidations` with `into: Y`. If you archived X with no
+absorption — truly stale, irrelevant, or obsolete — X goes under
+`prunings`.</pre>
+<pre class="prompt-curator" data-lang="zh">你现在以 Hermes 后台 skill CURATOR（图书管理员）的身份运行。
+这是一次 UMBRELLA-BUILDING（建造伞 skill）的整合 pass，不是被动审计，
+也不是去重器。
+
+skill 集合的目标是：a LIBRARY OF CLASS-LEVEL INSTRUCTIONS AND
+EXPERIENTIAL KNOWLEDGE（一个由 class-level 指令和实战经验组成的库）。
+拥有几百个窄 skill、每个只捕获某个 session 的具体 bug——是这个库的失败，
+不是它的特性。agent 检索 skill 是按 description 匹配，不是按名字精确匹配；
+一个带标注子小节的 umbrella skill，在可发现性上胜过五个窄 sibling，
+而不是反过来。
+
+正确的目标形态是 CLASS-LEVEL skill + 丰富的 SKILL.md body +
+`references/` / `templates/` / `scripts/` 子文件存放 session 特定细节
+——不是 "一 session 一 skill" 的微 entry。
+
+Hard rules（硬性规则——不许违反）：
+1. 不要碰 bundled 或 hub-installed 的 skill。下面的 candidate 列表
+   已经过滤为只有 agent-created skill。
+2. 不要 delete 任何 skill。Archiving（把 skill 目录移到
+   ~/.hermes/skills/.archive/）是最大破坏性动作。archive 可恢复；
+   delete 不行。
+3. 不要碰 pinned=yes 的 skill。完全跳过。
+4. 不要用 usage 计数当跳过整合的理由。计数器是新功能，大多数还是 0。
+   按 CONTENT（内容）判断是否 overlap，不要按 use_count。'use=0'
+   不是该 skill 有价值的证据，也不是它没价值的证据——只是无证据。
+5. 不要以 "每个 skill 有不同 trigger" 为由拒绝整合。pairwise distinctness
+   不是正确标准。正确标准是："一个人类维护者，会把这个写成 N 个独立
+   skill，还是写成一个 skill 加 N 个带标注子小节？" 答案是后者，就 merge。
+
+How to work（执行方法——不可选）：
+1. 扫描完整 candidate 列表。识别 PREFIX CLUSTER（共享首词或域关键词
+   的 skill 群）。常见例子：hermes-config-* / hermes-dashboard-* /
+   gateway-* / codex-* / ollama-* / anthropic-* / gemini-* / mcp-* /
+   salvage-* / pr-* / competitor-* / python-* / security-* 等。
+   预期会找到 10-25 个 cluster。
+2. 对每个 2+ 成员的 cluster，不要问 "这些两两是否 overlap?" ——
+   要问 "这些 skill 共同服务的 UMBRELLA CLASS 是什么？一个维护者会
+   命名这个类、为它写一个 skill 吗？" 如果会，挑（或新建）那个 umbrella，
+   把 sibling 吸收进去。
+3. 三种 consolidation 方式——按 cluster 选对的那一种：
+   a. MERGE INTO EXISTING UMBRELLA（并进已有 umbrella）——cluster 里
+      有一个 skill 已经足够宽泛，可以做 umbrella。patch 它，为每个 sibling
+      的独特洞察加一个带标注小节，然后 archive sibling。
+   b. CREATE A NEW UMBRELLA SKILL.md（新建 umbrella）——没有现成成员
+      足够宽。用 skill_manage action=create 写一个 class-level skill，
+      它的 SKILL.md 覆盖共享 workflow，并带简短标注子小节。然后 archive
+      被吸收的窄 sibling。
+   c. DEMOTE TO REFERENCES/TEMPLATES/SCRIPTS（降级成支持文件）——
+      sibling 内容窄但有价值（session 特定）。把它移到 umbrella 对应的
+      支持目录：
+      • `references/<topic>.md` —— session 特定细节 或 精炼知识库
+        （研究引用、API 文档节录、领域笔记、provider 怪异行为、复现配方）
+      • `templates/<name>.<ext>` —— 用于复制改造的起步文件
+      • `scripts/<name>.<ext>` —— 静态可重跑的动作（验证脚本、
+        fixture 生成器、探测）
+      然后 archive 老的 sibling。
+4. 同时标出 NAME 太窄的 skill（含 PR 号、feature 代号、特定 error 字符串、
+   或 'audit' / 'diagnosis' / 'salvage' 这类 session artifact）。
+   这些几乎总是该作为某个 class-level umbrella 的子小节或支持文件。
+5. 迭代。第一轮整合做完后，扫剩下的 skill，找下一个 umbrella 机会。
+   不要 merge 3 个就停。
+
+你的工具集：
+  - skills_list, skill_view        —— 读当前 skill 全景
+  - skill_manage action=patch      —— 给 umbrella 加小节
+  - skill_manage action=create     —— 新建 umbrella SKILL.md
+  - skill_manage action=write_file —— 在某个已存在 skill 下加
+    references/ / templates/ / scripts/ 文件
+  - skill_manage action=delete     —— archive 一个 skill。**必须**传
+    `absorbed_into=<umbrella>` 当你已经把它的内容合并到另一个 skill 里；
+    或传 `absorbed_into=""` 当你是真的在 prune、没有 forwarding target。
+    这个字段驱动 cron-job 的 skill 引用迁移——事后从你 YAML summary 里
+    猜的话很 fragile。
+  - terminal                       —— mv sibling 进 archive 或把它的
+    内容移进 support 子文件
+
+'keep'（保留不动）是合法决定 **只有**当：这个 skill 已经是 class-level
+umbrella，且没有任何提议中的 merge 能改善可发现性。
+"它窄，但和 sibling 不同" 不是 keep 的理由——这是把它移到某个 umbrella
+下做子小节或支持文件的理由。
+
+期望输出：真正的 umbrella 化。处理每一个明显的 cluster。如果你以
+&lt; 10 个 archive 结束这一轮，说明你停得太早——回去看你放过的 cluster。
+
+完成后，写一段人类可读 summary，**以及**一段结构化机器可读 block，
+让下游工具能区分 consolidation 和 pruning。格式严格照抄：
+
+## Structured summary (required)
+```yaml
+consolidations:
+  - from: &lt;old-skill-name&gt;
+    into: &lt;umbrella-skill-name&gt;
+    reason: &lt;一短句——为什么合并，不只是 "相似"&gt;
+prunings:
+  - name: &lt;skill-name&gt;
+    reason: &lt;一短句——为什么 archive 且无合并目标&gt;
+```
+
+你移到 .archive/ 的每个 skill **必须** 出现在 consolidations / prunings
+两个列表的其中一个。如果你把 X 整合进 umbrella Y（patch 了 Y / 给 Y 写了
+references 文件 / 创建 Y 时吸收了 X 的内容），X 属于 `consolidations`，
+带 `into: Y`。如果你 archive 了 X 但没合并——确实 stale / 无关 / 过时——
+X 属于 `prunings`。</pre>
+</div>
+</div>
+</details>
+
+<h3>9.8 Dry-run 模式</h3>
+
+<p>用户可以跑 <code>hermes curator run --dry</code>，curator 会在原 prompt 前贴一段 <code>CURATOR_DRY_RUN_BANNER</code>：</p>
+
+<div class="prompt-block">
+<pre class="prompt-curator" data-lang="en">═══════════════════════════════════════════════════════════════
+DRY-RUN — REPORT ONLY. DO NOT MUTATE THE SKILL LIBRARY.
+═══════════════════════════════════════════════════════════════
+
+This is a PREVIEW pass. Follow every instruction below EXCEPT:
+
+  • DO NOT call skill_manage with action=patch, create, delete,
+    write_file, or remove_file.
+  • DO NOT call terminal to mv skill directories into .archive/.
+  • DO NOT call terminal to mv, cp, rm, or rewrite any file under
+    ~/.hermes/skills/.
+  • skills_list and skill_view are FINE — read as much as you need.
+
+Your output IS the deliverable. Produce the exact same human-readable
+summary and structured YAML block you would produce on a live run —
+but describe the actions you WOULD take, not actions you took. A
+downstream reviewer will read the report and decide whether to approve
+a live run with `hermes curator run` (no flag).
+
+If you accidentally take a mutating action, say so explicitly in the
+summary so the reviewer can revert it.
+═══════════════════════════════════════════════════════════════</pre>
+<pre class="prompt-curator" data-lang="zh">═══════════════════════════════════════════════════════════════
+DRY-RUN —— 仅报告。不要 mutate（修改）skill 库。
+═══════════════════════════════════════════════════════════════
+
+这是一次 PREVIEW（预览）pass。遵守下面的每一条指令，**除了**：
+
+  • 不要用 skill_manage 调 action=patch / create / delete /
+    write_file / remove_file。
+  • 不要用 terminal 把 skill 目录 mv 到 .archive/。
+  • 不要用 terminal 在 ~/.hermes/skills/ 下做 mv / cp / rm / 重写
+    任何文件。
+  • skills_list 和 skill_view 没问题——想读多少读多少。
+
+你的输出就是 deliverable（交付物）。产出和真跑一遍完全相同的
+人类可读 summary 和结构化 YAML block —— 但描述 **你会做**
+什么动作，而不是 **你做了** 什么动作。一个下游 reviewer 会读这份
+报告，决定要不要批准真跑一次（用 `hermes curator run` 不带 flag）。
+
+如果你不小心做了 mutating 动作，在 summary 里显式说明，
+让 reviewer 能回滚。
+═══════════════════════════════════════════════════════════════</pre>
+</div>
+
+<p>dry-run 跑完<strong>不会 bump <code>last_run_at</code> 也不会 bump <code>run_count</code></strong>——一次预览不应该把下次定期 curator 的时间推迟。</p>
+
+<h3>9.9 安全护栏总结</h3>
+
+<table>
+<thead><tr><th>护栏</th><th>实现</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>Pre-run snapshot</strong></td>
+  <td><code>curator_backup.snapshot_skills()</code> 在 LLM pass 前快照整个 skills/ 目录，万一 LLM 跑歪了可以回退。即使 snapshot 失败也不阻塞 curator（最坏情况只是失去 rollback）</td>
+</tr>
+<tr>
+  <td><strong>从不 delete</strong></td>
+  <td><code>_delete_skill</code> 实际把目录 mv 到 <code>.archive/</code>，硬规则在 prompt 里也复述了一遍</td>
+</tr>
+<tr>
+  <td><strong>只动 agent-created</strong></td>
+  <td><code>_render_candidate_list()</code> 用 <code>skill_usage.agent_created_report()</code> 已经过滤过；bundled / hub-installed / user-created 都不在列表里</td>
+</tr>
+<tr>
+  <td><strong>Pinned skip</strong></td>
+  <td><code>apply_automatic_transitions</code> 里 <code>if row.get("pinned"): continue</code>；prompt 里也禁止 LLM 碰</td>
+</tr>
+<tr>
+  <td><strong>Mid-run crash 不会重触发</strong></td>
+  <td>状态在 LLM pass 之前就持久化了，crash 也不会让下一次启动立刻再 curator</td>
+</tr>
+<tr>
+  <td><strong>独立 auxiliary 模型</strong></td>
+  <td>通过 <code>auxiliary.curator.{provider,model,...}</code> 配置；不动主 session 的 prompt cache；不连主 memory plugin</td>
+</tr>
+</tbody>
+</table>
+
+<h3>9.10 Curator vs Per-turn Review 对比</h3>
+
+<table>
+<thead>
+<tr><th>维度</th><th><span class="pill review">Per-turn Review</span></th><th><span class="pill curator">Curator</span></th></tr>
+</thead>
+<tbody>
+<tr><td>触发</td><td>每 10 tool iteration / 10 user turn</td><td>CLI 启动 / gateway 长跑 + ≥ 7 天间隔 gate</td></tr>
+<tr><td>视野</td><td>当前 turn / session 的对话</td><td>整个 skill 库（几百个候选）</td></tr>
+<tr><td>典型动作</td><td>create / patch / write_file</td><td>consolidate（merge / 新建 umbrella / demote）+ archive</td></tr>
+<tr><td>fork 配置</td><td>max_iter=16, 继承 prompt cache</td><td>max_iter=9999, 独立 auxiliary 模型</td></tr>
+<tr><td>用哪份 prompt</td><td><code>_SKILL_REVIEW_PROMPT</code>（约 95 行）</td><td><code>CURATOR_REVIEW_PROMPT</code>（约 115 行）</td></tr>
+<tr><td>对 user-created skill</td><td>可以改</td><td>不动</td></tr>
+<tr><td>是否产出报告文件</td><td>否（只打印一行 summary）</td><td>是（<code>~/.hermes/logs/curator/&lt;timestamp&gt;/REPORT.md</code>）</td></tr>
+<tr><td>支持 dry-run</td><td>不支持</td><td><code>hermes curator run --dry</code></td></tr>
+<tr><td>预算/速度</td><td>~10 秒 turn 结束后</td><td>~50-100 API calls / 几十秒，跑一次约一周一次</td></tr>
+</tbody>
+</table>
+
+<h3>9.11 用户怎么操作 Curator</h3>
+
+<table>
+<thead><tr><th>命令</th><th>作用</th></tr></thead>
+<tbody>
+<tr><td><code>hermes curator status</code></td><td>查看上次跑的时间、summary、报告路径</td></tr>
+<tr><td><code>hermes curator run</code></td><td>立刻强跑一次（绕过 idle gate）</td></tr>
+<tr><td><code>hermes curator run --dry</code></td><td>跑一次预览，只产报告不动 skill</td></tr>
+<tr><td><code>hermes curator pause</code> / <code>resume</code></td><td>暂停 / 恢复自动调度（写入 <code>.curator_state.paused</code>）</td></tr>
+</tbody>
+</table>
+
+<p class="note curator-note"><strong>设计哲学</strong>：curator 是一个 <span class="hl-curator">"slow loop"</span>，相对于 per-turn review 的 "fast loop"。fast loop 负责<strong>增量写入</strong>新知识（act fast，局部），slow loop 负责<strong>定期梳理</strong>知识库结构（act slow，全局）。两个 loop 配合，让 skill 库随时间自然演化，又不会失控膨胀。</p>
+
+<hr>
+
+<!-- ============================ -->
+<!-- §10 整体一图流              -->
+<!-- ============================ -->
+<h2>10 · 整体一图流</h2>
+
+<div class="seq">
+<svg viewBox="0 0 900 540" xmlns="http://www.w3.org/2000/svg">
+  <rect x="40" y="20" width="120" height="50" rx="4" fill="#1a1a1a"/>
+  <text x="100" y="50" text-anchor="middle" fill="#fafaf7" font-size="14" font-weight="600">User</text>
+
+  <rect x="370" y="20" width="180" height="50" rx="4" fill="#2c5f9e"/>
+  <text x="460" y="42" text-anchor="middle" fill="white" font-size="13" font-weight="600">Main Agent</text>
+  <text x="460" y="58" text-anchor="middle" fill="white" font-size="11" opacity="0.85">读 MEMORY_GUIDANCE / SKILLS_GUIDANCE</text>
+
+  <line x1="160" y1="45" x2="370" y2="45" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a1)"/>
+  <line x1="370" y1="55" x2="160" y2="55" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a1)"/>
+
+  <rect x="700" y="20" width="160" height="50" rx="4" fill="white" stroke="#2c5f9e" stroke-width="2"/>
+  <text x="780" y="42" text-anchor="middle" fill="#2c5f9e" font-size="12" font-weight="600">memory / skill_manage</text>
+  <text x="780" y="58" text-anchor="middle" fill="#6b6b6b" font-size="10">主 agent 主动调用</text>
+  <line x1="550" y1="45" x2="700" y2="45" stroke="#2c5f9e" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <rect x="380" y="120" width="160" height="44" rx="4" fill="#3a8a4f" opacity="0.18" stroke="#3a8a4f" stroke-dasharray="3,3"/>
+  <text x="460" y="138" text-anchor="middle" fill="#3a8a4f" font-size="12" font-weight="600">turn-end check</text>
+  <text x="460" y="154" text-anchor="middle" fill="#3a8a4f" font-size="11">_iters_since_skill ≥ 10 ?</text>
+  <line x1="460" y1="70" x2="460" y2="120" stroke="#3a8a4f" stroke-width="1.5" marker-end="url(#a3)"/>
+
+  <rect x="600" y="200" width="240" height="120" rx="4" fill="#d97e2c" opacity="0.85"/>
+  <text x="720" y="225" text-anchor="middle" fill="white" font-size="14" font-weight="600">Per-turn Review Fork</text>
+  <text x="720" y="245" text-anchor="middle" fill="white" font-size="11">daemon thread · max_iter=16</text>
+  <text x="720" y="262" text-anchor="middle" fill="white" font-size="11">工具白名单：memory + skills</text>
+  <text x="720" y="279" text-anchor="middle" fill="white" font-size="11">继承主 agent 的 prompt cache</text>
+  <text x="720" y="298" text-anchor="middle" fill="white" font-size="11">读 _SKILL_REVIEW_PROMPT</text>
+  <line x1="540" y1="160" x2="600" y2="240" stroke="#d97e2c" stroke-width="2" marker-end="url(#a4)"/>
+
+  <rect x="600" y="370" width="240" height="100" rx="4" fill="#7a3f9e" opacity="0.85"/>
+  <text x="720" y="395" text-anchor="middle" fill="white" font-size="14" font-weight="600">Curator</text>
+  <text x="720" y="415" text-anchor="middle" fill="white" font-size="11">CLI 启动 / gateway · 一周一次</text>
+  <text x="720" y="432" text-anchor="middle" fill="white" font-size="11">auxiliary 模型 · max_iter=9999</text>
+  <text x="720" y="449" text-anchor="middle" fill="white" font-size="11">读 CURATOR_REVIEW_PROMPT</text>
+
+  <rect x="100" y="200" width="300" height="270" rx="4" fill="white" stroke="#5a6b5a" stroke-width="2"/>
+  <text x="250" y="225" text-anchor="middle" fill="#5a6b5a" font-size="14" font-weight="600">~/.hermes/</text>
+  <line x1="120" y1="240" x2="380" y2="240" stroke="#5a6b5a" stroke-dasharray="2,2"/>
+
+  <text x="120" y="265" font-size="12" font-weight="600" fill="#5a6b5a">skills/</text>
+  <text x="135" y="285" font-size="11" fill="#1a1a1a">&lt;name&gt;/SKILL.md</text>
+  <text x="135" y="302" font-size="11" fill="#6b6b6b">references/ · templates/ · scripts/</text>
+  <text x="135" y="319" font-size="11" fill="#6b6b6b">.archive/  ← curator 软删除</text>
+  <text x="135" y="336" font-size="11" fill="#6b6b6b">.curator_state</text>
+
+  <text x="120" y="375" font-size="12" font-weight="600" fill="#5a6b5a">memories/</text>
+  <text x="135" y="395" font-size="11" fill="#1a1a1a">MEMORY.md   [2200 字符上限]</text>
+  <text x="135" y="412" font-size="11" fill="#1a1a1a">USER.md     [1375 字符上限]</text>
+
+  <text x="120" y="442" font-size="12" font-weight="600" fill="#5a6b5a">logs/curator/</text>
+  <text x="135" y="460" font-size="11" fill="#6b6b6b">每次跑产 run.json + REPORT.md</text>
+
+  <line x1="700" y1="305" x2="400" y2="305" stroke="#d97e2c" stroke-width="1.5" marker-end="url(#a4)"/>
+  <text x="540" y="298" text-anchor="middle" fill="#d97e2c" font-size="11">写</text>
+
+  <line x1="700" y1="430" x2="400" y2="430" stroke="#7a3f9e" stroke-width="1.5" marker-end="url(#a5)"/>
+  <text x="540" y="423" text-anchor="middle" fill="#7a3f9e" font-size="11">读 + 改 + archive</text>
+
+  <line x1="780" y1="70" x2="780" y2="200" stroke="#2c5f9e" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#a2)"/>
+  <line x1="700" y1="70" x2="350" y2="200" stroke="#2c5f9e" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#a2)"/>
+
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a1a1a"/>
+    </marker>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2c5f9e"/>
+    </marker>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3a8a4f"/>
+    </marker>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d97e2c"/>
+    </marker>
+    <marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7a3f9e"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+
+<!-- ============================ -->
+<!-- §11 索引                     -->
+<!-- ============================ -->
+<h2>11 · 关键代码索引</h2>
+
+<table>
+<thead>
+<tr><th>主题</th><th>位置</th></tr>
+</thead>
+<tbody>
+<tr><td>计数器默认值</td><td><code>agent/agent_init.py:935-948, 1042-1045</code></td></tr>
+<tr><td>iteration 计数 +1</td><td><code>agent/conversation_loop.py:589-591</code></td></tr>
+<tr><td>计数器工具执行后归零</td><td><code>agent/tool_executor.py:94, 531</code></td></tr>
+<tr><td>turn-end 触发 + spawn</td><td><code>agent/conversation_loop.py:3964-3987</code></td></tr>
+<tr><td>spawn wrapper</td><td><code>run_agent.py:1103-1125</code></td></tr>
+<tr><td>三段 review prompt + fork 实现</td><td><code>agent/background_review.py</code></td></tr>
+<tr><td>MEMORY_GUIDANCE / SKILLS_GUIDANCE</td><td><code>agent/prompt_builder.py:150-186</code></td></tr>
+<tr><td>skill_manage 工具</td><td><code>tools/skill_manager_tool.py</code></td></tr>
+<tr><td>memory 工具 + 文件存储</td><td><code>tools/memory_tool.py</code></td></tr>
+<tr><td>Skill provenance（user vs agent）</td><td><code>tools/skill_provenance.py</code></td></tr>
+<tr><td>Skill usage / state machine</td><td><code>tools/skill_usage.py</code></td></tr>
+<tr><td><strong>Curator 主体</strong></td><td><code>agent/curator.py</code>（约 1780 行）</td></tr>
+<tr><td>&nbsp;&nbsp;<code>maybe_run_curator</code> 入口</td><td><code>agent/curator.py:1763</code></td></tr>
+<tr><td>&nbsp;&nbsp;<code>run_curator_review</code></td><td><code>agent/curator.py:1369</code></td></tr>
+<tr><td>&nbsp;&nbsp;<code>apply_automatic_transitions</code></td><td><code>agent/curator.py:256-296</code></td></tr>
+<tr><td>&nbsp;&nbsp;<code>CURATOR_REVIEW_PROMPT</code></td><td><code>agent/curator.py:330-445</code></td></tr>
+<tr><td>&nbsp;&nbsp;<code>CURATOR_DRY_RUN_BANNER</code></td><td><code>agent/curator.py:303-326</code></td></tr>
+<tr><td>&nbsp;&nbsp;<code>_render_candidate_list</code></td><td><code>agent/curator.py:1349</code></td></tr>
+<tr><td>&nbsp;&nbsp;<code>_run_llm_review</code>（fork）</td><td><code>agent/curator.py:1622</code></td></tr>
+<tr><td>Curator pre-run snapshot</td><td><code>agent/curator_backup.py</code></td></tr>
+<tr><td>Curator CLI（status / run / pause）</td><td><code>hermes_cli/curator.py</code></td></tr>
+<tr><td>Curator 调用点（CLI 启动）</td><td><code>cli.py:11702</code></td></tr>
+<tr><td>Curator 调用点（gateway）</td><td><code>gateway/run.py:16780</code></td></tr>
+</tbody>
+</table>
+
+<p class="note" style="margin-top:36px">配套 Markdown 笔记：<br>
+&nbsp;&nbsp;<a href="01-autonomous-skill-creation.md"><code>01-autonomous-skill-creation.md</code></a> — skill 自动生成<br>
+&nbsp;&nbsp;<a href="02-skill-self-improvement.md"><code>02-skill-self-improvement.md</code></a> — skill 修订 + curator<br>
+&nbsp;&nbsp;<a href="03-memory-nudges.md"><code>03-memory-nudges.md</code></a> — memory nudge 机制<br>
+&nbsp;&nbsp;<a href="04-fts5-session-recall.md"><code>04-fts5-session-recall.md</code></a> — 跨 session 检索<br>
+&nbsp;&nbsp;<a href="05-honcho-user-modeling.md"><code>05-honcho-user-modeling.md</code></a> — Honcho 用户建模</p>
+
+</div>
+
+<script>
+  // Language toggle
+  document.querySelectorAll('.lang-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.target;
+      document.body.setAttribute('data-lang', target);
+      document.querySelectorAll('.lang-toggle button').forEach(b => {
+        b.classList.toggle('active', b.dataset.target === target);
+      });
+    });
+  });
+</script>
+
+</body>
+</html>
